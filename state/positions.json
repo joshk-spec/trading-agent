@@ -1,0 +1,5 @@
+{
+  "last_reconciled": "2026-08-19T00:00:00Z",
+  "positions": [],
+  "_note": "Written by the agent each session. The broker is authoritative; this file exists only to detect drift. A discrepancy between this file and the broker is a §7 incident."
+}

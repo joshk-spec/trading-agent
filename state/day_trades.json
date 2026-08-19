@@ -1,0 +1,4 @@
+{
+  "day_trades": [],
+  "_note": "Append {date, symbol, opened, closed} for every same-session round trip. PDT limit is 3 per rolling 5 business days while account equity is under $25,000. A 4th restricts the account for 90 days."
+}
