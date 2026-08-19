@@ -7,7 +7,7 @@ marked **[HARD]** is a precondition, not a guideline.
 
 ## Phase 1 — Pre-flight (§3)
 
-0. **Run the test suite first:** `py engine/run_all_tests.py` (67 tests). Any
+0. **Run the test suite first:** `py engine/run_all_tests.py` (73 tests). Any
    failure ⇒ do not trade, report the failure. The risk math must be verified
    before money moves.
 1. Check both halt files. `state/HALT` present ⇒ reconcile, report, **exit**
@@ -17,7 +17,11 @@ marked **[HARD]** is a precondition, not a guideline.
    `get_option_positions(nonzero=true)`, `get_equity_orders`, `get_option_orders`.
    The broker is the only source of truth.
 3. Diff against `state/positions.json`. Any unexplained discrepancy is an
-   incident under §7 — investigate before proceeding.
+   incident under §7 — investigate before proceeding. Then **rewrite
+   `state/positions.json` from the live broker data** (schema in CLAUDE.md
+   §2.1) before sizing anything — the sizing CLI reads this file by default to
+   enforce `MAX_SYMBOL_EXP`/`MAX_CONCURRENT`, so a stale file makes those caps
+   silently under-count.
 4. **Run the engine for tier, halts, and budget — do not reason these out:**
    ```bash
    py engine/risk_engine.py preflight \

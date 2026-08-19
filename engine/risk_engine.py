@@ -14,12 +14,18 @@ Usage from the agent:
     python3 engine/risk_engine.py size-equity --account 5000 --entry 14.50 --stop 13.60
     python3 engine/risk_engine.py size-option --account 5000 --premium 1.40
     python3 engine/risk_engine.py preflight --account 5000 --session-open 5200 --week-open 5400
+
+size-equity, size-option, and size-csp read state/positions.json by default
+(override with --positions-file) to enforce MAX_SYMBOL_EXP and MAX_CONCURRENT
+against what's actually open. That file must be kept current every session —
+a stale one under-counts exposure without any error.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import os
 from dataclasses import dataclass, field, asdict
 from datetime import date, datetime, timedelta
 from typing import Literal, Sequence
@@ -63,6 +69,8 @@ ASK_SIZE_MULTIPLE    = 10     # ask_size must be >= this * intended contracts
 
 Kind = Literal["equity", "long_option", "short_put", "short_call"]
 
+DEFAULT_POSITIONS_FILE = "state/positions.json"
+
 
 # ────────────────────────────────── MODELS ──────────────────────────────────
 @dataclass(frozen=True)
@@ -78,6 +86,38 @@ class Position:
     @property
     def is_option(self) -> bool:
         return self.kind in ("long_option", "short_put", "short_call")
+
+
+def load_positions(path: str = DEFAULT_POSITIONS_FILE) -> list[Position]:
+    """Load current open positions from a state file (state/positions.json's
+    `positions` array) for MAX_SYMBOL_EXP / MAX_CONCURRENT checks.
+
+    This is the fix for a real gap: size_equity/size_long_option/size_csp all
+    accept a `positions` argument and are unit-tested against it, but the CLI
+    previously never passed one — meaning MAX_SYMBOL_EXP and MAX_CONCURRENT
+    were structurally unenforceable through the only interface the agent is
+    told to use ("shell out to it"). No file yet ⇒ no open positions, not an
+    error. A file that exists but is malformed fails loudly — under-counting
+    exposure silently is worse than crashing."""
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    positions: list[Position] = []
+    for i, p in enumerate(data.get("positions", [])):
+        try:
+            positions.append(Position(
+                symbol=str(p["symbol"]),
+                kind=p["kind"],
+                quantity=float(p["quantity"]),
+                notional=float(p["notional"]),
+            ))
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError(
+                f"positions[{i}] in {path} is malformed ({e}). Fix state/positions.json "
+                f"before sizing — a bad entry must not silently under-count exposure."
+            ) from e
+    return positions
 
 
 @dataclass
@@ -465,25 +505,34 @@ def main() -> None:
     s = sub.add_parser("size-equity"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--entry", type=float, required=True); s.add_argument("--stop", type=float, required=True)
     s.add_argument("--symbol", default="")
+    s.add_argument("--positions-file", default=DEFAULT_POSITIONS_FILE,
+                    help="JSON file of currently open positions, for MAX_SYMBOL_EXP/MAX_CONCURRENT")
 
     s = sub.add_parser("size-option"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--premium", type=float, required=True); s.add_argument("--symbol", default="")
     s.add_argument("--playbook", default="P2")
+    s.add_argument("--positions-file", default=DEFAULT_POSITIONS_FILE,
+                    help="JSON file of currently open positions, for MAX_SYMBOL_EXP/MAX_CONCURRENT")
 
     s = sub.add_parser("size-csp"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--cash", type=float, required=True); s.add_argument("--strike", type=float, required=True)
     s.add_argument("--symbol", default="")
+    s.add_argument("--positions-file", default=DEFAULT_POSITIONS_FILE,
+                    help="JSON file of currently open positions, for MAX_SYMBOL_EXP/MAX_CONCURRENT")
 
     s = sub.add_parser("preflight"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--session-open", type=float, default=0.0); s.add_argument("--week-open", type=float, default=0.0)
 
     a = p.parse_args()
     if a.cmd == "size-equity":
-        print(size_equity(a.account, a.entry, a.stop, a.symbol).to_json())
+        positions = load_positions(a.positions_file)
+        print(size_equity(a.account, a.entry, a.stop, a.symbol, positions).to_json())
     elif a.cmd == "size-option":
-        print(size_long_option(a.account, a.premium, a.symbol, (), a.playbook).to_json())
+        positions = load_positions(a.positions_file)
+        print(size_long_option(a.account, a.premium, a.symbol, positions, a.playbook).to_json())
     elif a.cmd == "size-csp":
-        print(size_csp(a.account, a.cash, a.strike, a.symbol).to_json())
+        positions = load_positions(a.positions_file)
+        print(size_csp(a.account, a.cash, a.strike, a.symbol, positions).to_json())
     elif a.cmd == "preflight":
         d = check_drawdown(a.account, a.session_open, a.week_open)
         print(json.dumps({

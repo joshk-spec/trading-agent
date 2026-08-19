@@ -126,6 +126,18 @@ symbol_exposure(F) = F shares × price
 equity position and a P2 option position on the same underlying are one exposure,
 not two, and the 30% ceiling applies to the sum.
 
+**[HARD]** The sizing CLI enforces this by reading `state/positions.json`
+(`--positions-file`, defaults to that path) — it is not passed on the command
+line by hand. This means **`state/positions.json` must be current before you
+call `size-equity`/`size-option`/`size-csp`, not just diffed against the broker
+for drift-detection afterward** (§3 step 3). A stale or missing entry there
+doesn't raise an error — it makes `MAX_SYMBOL_EXP` and `MAX_CONCURRENT` compute
+against fewer positions than actually exist, silently. Reconcile and rewrite
+`state/positions.json` from live broker data before sizing anything, every
+session. Schema: `{symbol, kind, quantity, notional}` per position, `kind` one
+of `equity|long_option|short_put|short_call`, `notional` computed per the
+formula above.
+
 **Precedence — the caps bind before the risk target.** Size to `MAX_RISK_TRADE`
 first, then cut by `MAX_POS_NOTIONAL`, then by remaining `MAX_SYMBOL_EXP` room.
 The engine reports which one bound as `binding_constraint`.
@@ -269,7 +281,11 @@ Execute in order. Abort on any failure.
    incident — confirm it against `get_equity_orders`, journal the close (§8),
    and count it under §2.4 if it closed a same-session entry. The exception
    covers only that specific order filling at its known price; anything else
-   unreconciled is still a §7 incident.
+   unreconciled is still a §7 incident. **After reconciling, rewrite
+   `state/positions.json`** from the live broker data (schema and formulas in
+   §2.1) — this is not just a drift check anymore, it is the file
+   `size-equity`/`size-option`/`size-csp` read to enforce `MAX_SYMBOL_EXP` and
+   `MAX_CONCURRENT`. Do this before Phase 3/4, not after.
 4. **Compute tier** from live account value. Note which playbooks are live.
 5. **Compute drawdown** vs session-open and week-open marks in `state/marks.json`.
    Compare against `DAILY_HALT` / `WEEKLY_HALT`.

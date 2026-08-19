@@ -6,8 +6,11 @@
 Every constitutional number is pinned here. A failing test means either the
 engine drifted or CLAUDE.md changed without the engine following.
 """
+import json
 import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from datetime import date
 
@@ -17,8 +20,10 @@ from risk_engine import (  # noqa: E402
     Position, resolve_tier, playbooks_for, playbook_allowed, max_risk_trade,
     symbol_exposure, check_caps, size_equity, size_long_option, size_csp,
     count_day_trades, day_trades_available, check_drawdown,
-    check_option_liquidity, MAX_OPTIONS_EXP_PCT,
+    check_option_liquidity, load_positions, MAX_OPTIONS_EXP_PCT,
 )
+
+ENGINE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "risk_engine.py")
 
 
 class TestTiers(unittest.TestCase):
@@ -218,6 +223,92 @@ class TestDrawdown(unittest.TestCase):
 
     def test_account_floor_halts(self):
         self.assertTrue(check_drawdown(49.0, 49.0, 49.0).halt)
+
+
+class TestLoadPositions(unittest.TestCase):
+    """load_positions() is what closes the gap where the CLI never enforced
+    MAX_SYMBOL_EXP/MAX_CONCURRENT because it never saw existing positions."""
+
+    def test_missing_file_means_no_open_positions(self):
+        self.assertEqual(load_positions("this/path/does/not/exist.json"), [])
+
+    def test_loads_valid_file(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"positions": [
+                {"symbol": "F", "kind": "equity", "quantity": 100, "notional": 1450.0},
+            ]}, f)
+            path = f.name
+        try:
+            pos = load_positions(path)
+            self.assertEqual(len(pos), 1)
+            self.assertEqual(pos[0].symbol, "F")
+            self.assertEqual(pos[0].notional, 1450.0)
+        finally:
+            os.remove(path)
+
+    def test_malformed_entry_fails_loudly_not_silently(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"positions": [{"symbol": "F", "kind": "equity"}]}, f)  # missing quantity/notional
+            path = f.name
+        try:
+            with self.assertRaises(ValueError):
+                load_positions(path)
+        finally:
+            os.remove(path)
+
+
+class TestCLIEnforcesExistingPositions(unittest.TestCase):
+    """Regression test for the gap: size_equity/size_long_option/size_csp were
+    unit-tested with a `positions` argument, but main() never passed one, so
+    MAX_SYMBOL_EXP and MAX_CONCURRENT were unenforceable through the actual
+    `py engine/risk_engine.py ...` interface CLAUDE.md tells the agent to use.
+    These tests invoke the real CLI as a subprocess, not the Python function."""
+
+    def _run(self, *args):
+        result = subprocess.run(
+            [sys.executable, ENGINE_PATH, *args],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def _positions_file(self, positions):
+        f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump({"positions": positions}, f)
+        f.close()
+        return f.name
+
+    def test_cli_trims_to_remaining_symbol_room(self):
+        path = self._positions_file([
+            {"symbol": "F", "kind": "equity", "quantity": 190, "notional": 2_800.0},  # 28% of 10k
+        ])
+        try:
+            out = self._run("size-equity", "--account", "10000", "--entry", "14.50",
+                             "--stop", "13.60", "--symbol", "F", "--positions-file", path)
+        finally:
+            os.remove(path)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["binding_constraint"], "MAX_SYMBOL_EXP")
+        self.assertAlmostEqual(out["notional"], 200.0, places=2)
+
+    def test_cli_blocks_sixth_concurrent_position(self):
+        path = self._positions_file(
+            [{"symbol": f"S{i}", "kind": "equity", "quantity": 1, "notional": 100.0} for i in range(5)]
+        )
+        try:
+            out = self._run("size-equity", "--account", "100000", "--entry", "50",
+                             "--stop", "45", "--symbol", "NEW", "--positions-file", path)
+        finally:
+            os.remove(path)
+        self.assertFalse(out["ok"])
+        self.assertTrue(any("MAX_CONCURRENT" in r for r in out["reasons"]))
+
+    def test_cli_with_no_positions_file_behaves_as_flat_account(self):
+        out = self._run("size-equity", "--account", "10000", "--entry", "14.50",
+                         "--stop", "13.60", "--symbol", "F",
+                         "--positions-file", "no/such/file.json")
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["binding_constraint"], "MAX_POS_NOTIONAL")
 
 
 class TestLiquidityGates(unittest.TestCase):
