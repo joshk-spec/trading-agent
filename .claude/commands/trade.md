@@ -36,6 +36,12 @@ Report the pre-flight block before doing anything else.
 Before looking at a single new idea. For each open position: live quote, P&L,
 playbook exit conditions, time stops, thesis invalidation. Act and journal.
 
+If a stop tightened this run (breakeven trail, ATR trail, etc.), cancel the
+resting broker stop-limit order and replace it at the new stop_price (§5, §6
+step 9). Verify every open whole-share position still has a protective stop
+resting at the broker; if one doesn't (never placed, got cancelled, fractional
+quantity), say so explicitly in the journal — don't let it pass silently.
+
 ## Phase 3 — Scan for new entries (§4)
 
 Only playbooks unlocked at the current tier. Read the playbook file — do not
@@ -52,8 +58,9 @@ Full sequence per order: live quote → `risk_engine.check_option_liquidity()` �
 limit price → **size via the engine** (`size-equity` / `size-option` / `size-csp`)
 → re-verify all [HARD] rules per §6 step 5, including `MAX_SYMBOL_EXP` summed
 across equity and options in that underlying → `review_*_order` → place → confirm
-fill → journal (record the engine's `risk_pct` and `binding_constraint`) → update
-state.
+fill → **for equity entries, place the resting protective stop-limit order (§6
+step 9), or record why one couldn't be placed** → journal (record the engine's
+`risk_pct`, `binding_constraint`, and the broker stop's status) → update state.
 
 **[HARD]** Any quantity in an order payload must have come from the engine. If you
 find yourself typing a share count or contract count you calculated yourself,

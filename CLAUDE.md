@@ -211,6 +211,12 @@ would close a position opened the same session, count day trades in the trailing
 5 business days. At 3, the position must be held overnight or not opened.
 Reserve the 3rd day trade for genuine risk events only.
 
+**[HARD]** A protective stop-limit order (§6 step 9) that fills the same session
+it was placed counts as a day trade exactly like an agent-initiated close. Check
+`get_equity_orders` for fills since the last run — not only orders this session
+placed — before counting; a stop can fill between sessions with no agent
+watching it happen.
+
 ### 2.5 Liquidity gates — options
 
 **[HARD]** Every leg must satisfy all of:
@@ -258,7 +264,12 @@ Execute in order. Abort on any failure.
    this file, and the journal are all potentially stale.
 3. **Diff against `state/positions.json`.** Any discrepancy — a fill you did not
    record, an assignment, an expiry, a position you believed closed — is an
-   incident under §7. Investigate before trading.
+   incident under §7. Investigate before trading. **Exception:** a fill of a
+   protective stop-limit order placed under §6 step 9 is expected, not an
+   incident — confirm it against `get_equity_orders`, journal the close (§8),
+   and count it under §2.4 if it closed a same-session entry. The exception
+   covers only that specific order filling at its known price; anything else
+   unreconciled is still a §7 incident.
 4. **Compute tier** from live account value. Note which playbooks are live.
 5. **Compute drawdown** vs session-open and week-open marks in `state/marks.json`.
    Compare against `DAILY_HALT` / `WEEKLY_HALT`.
@@ -306,6 +317,15 @@ For each open position:
 stop, cancelling a stop, or "giving it room" is forbidden. If a stop is hit, the
 position is closed. The stop was set when you were calm; you are not calmer now.
 
+**[HARD]** Whenever a position's stop moves (breakeven trail at +1R, ATR trail
+at +2R, or any tightening), cancel the existing resting broker stop-limit order
+(`cancel_equity_order`) and place its replacement at the new `stop_price` before
+the session ends (§6 step 9) — the broker-side order must always match the
+current internal stop, never the original one. If a position has no protective
+stop currently resting at the broker (fractional quantity, or the order was
+never confirmed), it has no intraday protection between sessions — say so in
+the journal every time it's true, don't let it go unmentioned.
+
 **[HARD]** No averaging down. Adding to a losing position is prohibited without
 exception. Adding to a winner is permitted only if total exposure stays within
 §2.1 and the add is sized off the new risk, not the original.
@@ -341,11 +361,31 @@ Sequence for every order:
 7. Place the order.
 8. Confirm the fill via `get_equity_orders` / `get_option_orders`. Do not assume.
    A submitted order is not a filled order.
-9. Write the journal entry (§8) **before** looking for the next trade.
-10. Update `state/positions.json` and `state/day_trades.json`.
+9. **[HARD] For every equity entry, place a resting protective stop at the
+   broker immediately after the fill is confirmed** — `type=stop_limit`,
+   `stop_price` = the playbook's computed stop, `limit_price` = one tick below
+   `stop_price`, `time_in_force=gtc`. Confirm it is live via `get_equity_orders`
+   before ending the session. This order — not any of the checks in this
+   document — is the account's actual protection against a crash between
+   sessions: every rule elsewhere here only evaluates when a session is
+   running, and sessions are not continuous.
+   - **Fractional-share exception.** Robinhood does not accept stop orders on
+     fractional quantities — only `type=market` fills fractional shares, and
+     stop orders are whole-share, regular-hours-only instruments. If the
+     engine-sized quantity is fractional (routine on P1), no broker-side stop
+     can be placed. Do not round the quantity to make one possible — that
+     silently changes the position size the engine computed. Record
+     `Broker stop: none — fractional quantity` in the journal so the gap is
+     visible rather than assumed away.
+   - This order is **exempt** from the "cancel resting orders" rule below —
+     leaving it resting is the explicit point of placing it. Options positions
+     are not currently covered by this step; see §5 for what to do instead.
+10. Write the journal entry (§8) **before** looking for the next trade.
+11. Update `state/positions.json` and `state/day_trades.json`.
 
 **[HARD]** Unfilled limit orders are cancelled at session end. Never leave a
 resting order overnight that you have not explicitly decided to leave resting.
+The protective stop placed under step 9 is the one deliberate exception.
 
 ---
 

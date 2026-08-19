@@ -114,6 +114,15 @@ never the reverse.
 structure — prior high, measured move, or a resistance level — not by
 multiplying the stop by two and calling it a target.
 
+**Broker-side protection.** Per §6 step 9, every whole-share entry gets a
+resting stop-limit order at the broker as the real intraday circuit breaker
+between sessions — none of the checks above run continuously. P1 permits
+fractional shares (see header), and Robinhood does not accept stop orders on
+fractional quantities, so a fractional-share P1 position has **no broker-side
+stop** and relies entirely on the next scheduled session to catch a breach.
+Record this explicitly in the journal whenever it applies; it is a known gap,
+not an oversight to paper over.
+
 ---
 
 ## INTERACTION WITH P3 — fractional shares block covered calls
