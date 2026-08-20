@@ -202,13 +202,34 @@ any circumstance, for any reason, however convincing.**
 with today's date, the run is: reconcile, report, exit. No orders.
 
 **[HARD] A halt check that could not run is not a passed halt check.** `preflight`
-returns `checks_skipped`, listing any drawdown check it could not evaluate because
-the corresponding mark in `state/marks.json` was missing or non-positive. Both
-`--session-open` and `--week-open` default to `0.0`, so **omitting them produces
-`halt: false` while silently evaluating nothing.** If `checks_skipped` is
-non-empty, treat the run as blocked under §2.0 — you may not verify a **[HARD]**
-rule, therefore you do not trade. Fix `state/marks.json` and re-run preflight;
-never proceed on an all-clear the engine did not actually compute.
+returns `checks_skipped`, listing any drawdown check it could not **validly**
+evaluate. Both `--session-open` and `--week-open` default to `0.0`, so **omitting
+them produces `halt: false` while silently evaluating nothing.** If
+`checks_skipped` is non-empty, treat the run as blocked under §2.0 — you may not
+verify a **[HARD]** rule, therefore you do not trade. Fix `state/marks.json` and
+re-run preflight; never proceed on an all-clear the engine did not actually
+compute.
+
+**[HARD] The mark DATES are as load-bearing as the values, and must be passed.**
+
+```bash
+py engine/risk_engine.py preflight --account <live> \
+  --session-open <value> --session-open-date <YYYY-MM-DD> \
+  --week-open   <value> --week-open-date   <YYYY-MM-DD>
+```
+
+A session-open mark carried over from a previous day measures today's drawdown
+against **the wrong baseline** and reports a clean pass while doing it — the
+same silent failure as a missing mark. The engine therefore treats a stale mark
+(session-open not dated today; week-open not inside the current Mon-start week)
+and an *undated* mark as blocking `checks_skipped` entries, exactly like a
+missing one. Omitting the date flags is not a way to skip the check — it is
+itself blocking.
+
+**[HARD]** At the first run of a trading day, set `session_open_value` to the
+live account value and `session_open_date` to today **before** calling
+preflight; same for `week_open_*` at the first run of a week. Setting the mark
+is a deliberate act at session start, not a value you inherit.
 
 ### 2.3 The Minimum Viable Unit rule — read this twice
 

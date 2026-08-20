@@ -64,7 +64,7 @@ If it halts on its own, read the reason before clearing.
 py engine/run_all_tests.py
 ```
 
-86 tests, no dependencies beyond stdlib Python.
+92 tests, no dependencies beyond stdlib Python.
 
 (Use `py` on Windows. On macOS or Linux the command is `python3`.) They pin every constitutional
 number — tier boundaries, the 5%/25%/30%/40% caps, the Minimum Viable Unit rule,

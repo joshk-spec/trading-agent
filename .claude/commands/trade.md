@@ -7,7 +7,7 @@ marked **[HARD]** is a precondition, not a guideline.
 
 ## Phase 1 — Pre-flight (§3)
 
-0. **Run the test suite first:** `py engine/run_all_tests.py` (86 tests). Any
+0. **Run the test suite first:** `py engine/run_all_tests.py` (92 tests). Any
    failure ⇒ do not trade, report the failure. The risk math must be verified
    before money moves.
 1. Check both halt files. `state/HALT` present ⇒ reconcile, report, **exit**
@@ -22,15 +22,20 @@ marked **[HARD]** is a precondition, not a guideline.
    §2.1) before sizing anything — the sizing CLI reads this file by default to
    enforce `MAX_SYMBOL_EXP`/`MAX_CONCURRENT`, so a stale file makes those caps
    silently under-count.
-4. **Run the engine for tier, halts, and budget — do not reason these out:**
+4. **Set today's marks, then run the engine for tier, halts, and budget — do not
+   reason these out.** If `state/marks.json` `session_open_date` is not today,
+   set `session_open_value` to the live account value and `session_open_date` to
+   today first; same for `week_open_*` at the first run of a week (§2.2).
    ```bash
-   py engine/risk_engine.py preflight \
-     --account <total_value> --session-open <marks> --week-open <marks>
+   py engine/risk_engine.py preflight --account <total_value> \
+     --session-open <value> --session-open-date <YYYY-MM-DD> \
+     --week-open   <value> --week-open-date   <YYYY-MM-DD>
    ```
    Report its output verbatim: tier, playbooks live, max risk per trade, whether
-   PDT applies, and any halt reasons. **Both mark flags default to `0.0`, and a
-   missing mark silently evaluates nothing — so check `checks_skipped` in the
-   output. Non-empty ⇒ a [HARD] halt rule could not be verified ⇒ do not trade
+   PDT applies, and any halt reasons. **Both mark flags default to `0.0`, a
+   missing mark silently evaluates nothing, and a stale or undated mark measures
+   against the wrong baseline — so check `checks_skipped` in the output.
+   Non-empty ⇒ a [HARD] halt rule could not be verified ⇒ do not trade
    (§2.0/§2.2); fix `state/marks.json` and re-run preflight.** `halt: false` with
    a non-empty `checks_skipped` is not an all-clear.
 5. Count day trades via `risk_engine.count_day_trades()` against

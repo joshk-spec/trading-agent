@@ -498,26 +498,85 @@ class HaltDecision:
     reasons: list[str] = field(default_factory=list)
     daily_pct: float = 0.0
     weekly_pct: float = 0.0
-    # Halt checks that could NOT be evaluated because their mark was missing or
-    # non-positive. A halt=False carrying entries here does not mean "no
-    # drawdown breach" — it means the question was never asked. §2.0 forbids
-    # trading on a [HARD] rule you cannot verify, so a non-empty list must be
-    # treated as blocking, not as an all-clear.
+    # Halt checks that could NOT be validly evaluated — the mark was missing,
+    # non-positive, of unverifiable age, or STALE (dated to an earlier session
+    # or week, so the comparison would run against the wrong baseline).
+    # A halt=False carrying entries here does not mean "no drawdown breach" —
+    # it means the question was never validly asked. §2.0 forbids trading on a
+    # [HARD] rule you cannot verify, so a non-empty list is blocking.
     checks_skipped: list[str] = field(default_factory=list)
 
 
-def check_drawdown(account_value: float, session_open: float, week_open: float) -> HaltDecision:
+def _as_date(value: date | str | None) -> date | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, date):
+        return value
+    return datetime.strptime(str(value), "%Y-%m-%d").date()
+
+
+def _week_start(d: date) -> date:
+    """Monday of d's week. Week-open marks are per calendar trading week."""
+    return d - timedelta(days=d.weekday())
+
+
+def check_drawdown(
+    account_value: float,
+    session_open: float,
+    week_open: float,
+    session_open_date: date | str | None = None,
+    week_open_date: date | str | None = None,
+    today: date | None = None,
+) -> HaltDecision:
+    """Drawdown halts (§2.2).
+
+    The mark DATES are as load-bearing as the values. A session-open mark left
+    over from a previous day measures today's drawdown against the wrong
+    baseline and reports a clean pass while doing it — the same failure shape as
+    a mark that is missing entirely, and just as silent. So an absent or stale
+    date is reported in `checks_skipped` and is blocking, exactly like a missing
+    value. Supplying the dates is how you prove the baseline is current."""
     d = HaltDecision(halt=False)
+    today = today or date.today()
+    sess_d = _as_date(session_open_date)
+    week_d = _as_date(week_open_date)
 
     if not (session_open and session_open > 0):
         d.checks_skipped.append(
             "DAILY_HALT not evaluated: session-open mark missing or non-positive. "
             "Populate state/marks.json before trading (§3 step 5)."
         )
+    elif sess_d is None:
+        d.checks_skipped.append(
+            "DAILY_HALT staleness unverified: no session-open DATE supplied, so the "
+            "baseline cannot be confirmed as today's. Pass --session-open-date "
+            "from state/marks.json (§3 step 5)."
+        )
+    elif sess_d != today:
+        d.checks_skipped.append(
+            f"DAILY_HALT baseline is STALE: session-open mark is dated {sess_d}, "
+            f"today is {today}. It measures drawdown from the wrong session. Set "
+            f"session_open_value to the account value at today's open and "
+            f"session_open_date to {today} in state/marks.json, then re-run (§3 step 5)."
+        )
+
     if not (week_open and week_open > 0):
         d.checks_skipped.append(
             "WEEKLY_HALT not evaluated: week-open mark missing or non-positive. "
             "Populate state/marks.json before trading (§3 step 5)."
+        )
+    elif week_d is None:
+        d.checks_skipped.append(
+            "WEEKLY_HALT staleness unverified: no week-open DATE supplied, so the "
+            "baseline cannot be confirmed as this week's. Pass --week-open-date "
+            "from state/marks.json (§3 step 5)."
+        )
+    elif _week_start(week_d) != _week_start(today):
+        d.checks_skipped.append(
+            f"WEEKLY_HALT baseline is STALE: week-open mark is dated {week_d} "
+            f"(week of {_week_start(week_d)}), current week begins {_week_start(today)}. "
+            f"Set week_open_value to the account value at this week's first session and "
+            f"week_open_date accordingly in state/marks.json, then re-run (§3 step 5)."
         )
 
     if session_open and session_open > 0:
@@ -599,6 +658,12 @@ def main() -> None:
 
     s = sub.add_parser("preflight"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--session-open", type=float, default=0.0); s.add_argument("--week-open", type=float, default=0.0)
+    s.add_argument("--session-open-date", default="",
+                   help="session_open_date from state/marks.json (YYYY-MM-DD). Required to prove "
+                        "the daily baseline is today's; omitting it is blocking.")
+    s.add_argument("--week-open-date", default="",
+                   help="week_open_date from state/marks.json (YYYY-MM-DD). Required to prove "
+                        "the weekly baseline is this week's; omitting it is blocking.")
 
     a = p.parse_args()
     if a.cmd == "size-equity":
@@ -611,7 +676,8 @@ def main() -> None:
         positions = load_positions(a.positions_file)
         print(size_csp(a.account, a.cash, a.strike, a.symbol, positions).to_json())
     elif a.cmd == "preflight":
-        d = check_drawdown(a.account, a.session_open, a.week_open)
+        d = check_drawdown(a.account, a.session_open, a.week_open,
+                           a.session_open_date, a.week_open_date)
         print(json.dumps({
             "tier": resolve_tier(a.account),
             "playbooks": list(playbooks_for(a.account)),

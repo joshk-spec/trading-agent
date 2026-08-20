@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -234,14 +234,83 @@ class TestDrawdown(unittest.TestCase):
         self.assertTrue(any("DAILY_HALT not evaluated" in s for s in d.checks_skipped))
         self.assertTrue(any("WEEKLY_HALT not evaluated" in s for s in d.checks_skipped))
 
-    def test_present_marks_skip_nothing(self):
-        d = check_drawdown(1_000.0, 1_000.0, 1_000.0)
+    def test_present_current_marks_skip_nothing(self):
+        today = date(2026, 8, 20)          # Thursday
+        d = check_drawdown(1_000.0, 1_000.0, 1_000.0,
+                           session_open_date=today, week_open_date=today, today=today)
         self.assertEqual(d.checks_skipped, [])
 
     def test_one_missing_mark_reports_only_that_one(self):
-        d = check_drawdown(1_000.0, 1_000.0, 0.0)
+        today = date(2026, 8, 20)
+        d = check_drawdown(1_000.0, 1_000.0, 0.0,
+                           session_open_date=today, week_open_date=today, today=today)
         self.assertEqual(len(d.checks_skipped), 1)
         self.assertIn("WEEKLY_HALT", d.checks_skipped[0])
+
+
+class TestStaleMarks(unittest.TestCase):
+    """A mark left over from an earlier session measures drawdown against the
+    wrong baseline and reports a clean pass while doing it — the same silent
+    failure as a missing mark, so it is blocking in the same way."""
+
+    def test_yesterdays_session_mark_is_stale(self):
+        today = date(2026, 8, 20)
+        d = check_drawdown(1_000.0, 1_000.0, 1_000.0,
+                           session_open_date=date(2026, 8, 19),   # yesterday
+                           week_open_date=today, today=today)
+        self.assertFalse(d.halt)
+        self.assertEqual(len(d.checks_skipped), 1)
+        self.assertIn("DAILY_HALT baseline is STALE", d.checks_skipped[0])
+
+    def test_week_mark_from_previous_week_is_stale(self):
+        today = date(2026, 8, 20)                       # Thu, week of Mon 8/17
+        d = check_drawdown(1_000.0, 1_000.0, 1_000.0,
+                           session_open_date=today,
+                           week_open_date=date(2026, 8, 14),      # Fri of prior week
+                           today=today)
+        self.assertEqual(len(d.checks_skipped), 1)
+        self.assertIn("WEEKLY_HALT baseline is STALE", d.checks_skipped[0])
+
+    def test_week_mark_from_monday_is_current_all_week(self):
+        monday = date(2026, 8, 17)
+        for offset in range(5):                          # Mon-Fri of that week
+            today = monday + timedelta(days=offset)
+            with self.subTest(today=today):
+                d = check_drawdown(1_000.0, 1_000.0, 1_000.0,
+                                   session_open_date=today,
+                                   week_open_date=monday, today=today)
+                self.assertEqual(d.checks_skipped, [])
+
+    def test_absent_dates_are_blocking_not_silently_trusted(self):
+        """Omitting the dates must not be the quiet way to skip the check —
+        that is the exact trap the missing-mark rule already closed."""
+        d = check_drawdown(1_000.0, 1_000.0, 1_000.0, today=date(2026, 8, 20))
+        self.assertEqual(len(d.checks_skipped), 2)
+        self.assertTrue(all("staleness unverified" in s for s in d.checks_skipped))
+
+    def test_stale_mark_still_reports_a_real_breach(self):
+        """Staleness is blocking, but a breach it does detect is still real —
+        the two signals must not mask each other."""
+        today = date(2026, 8, 20)
+        d = check_drawdown(800.0, 1_000.0, 1_000.0,
+                           session_open_date=date(2026, 8, 19), week_open_date=today,
+                           today=today)
+        self.assertTrue(d.halt)
+        self.assertTrue(any("DAILY_HALT breached" in r for r in d.reasons))
+        self.assertTrue(any("STALE" in s for s in d.checks_skipped))
+
+    def test_cli_reports_stale_session_mark(self):
+        result = subprocess.run(
+            [sys.executable, ENGINE_PATH, "preflight", "--account", "50",
+             "--session-open", "50", "--week-open", "50",
+             "--session-open-date", "2000-01-01", "--week-open-date", "2000-01-01"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = json.loads(result.stdout)
+        self.assertFalse(out["halt"])
+        self.assertEqual(len(out["checks_skipped"]), 2)
+        self.assertTrue(any("STALE" in s for s in out["checks_skipped"]))
 
 
 class TestEquityQuantityPrecision(unittest.TestCase):
