@@ -74,16 +74,26 @@ day-trade counts by reasoning. Ever. Every one of those numbers comes from
 `engine/risk_engine.py`, which is unit-tested. Shell out to it:
 
 ```bash
-py engine/risk_engine.py preflight   --account 5000 --session-open 5200 --week-open 5400
-py engine/risk_engine.py size-equity --account 5000 --entry 14.50 --stop 13.60 --symbol F
+py engine/risk_engine.py preflight   --account 5000 \
+    --session-open 5200 --session-open-date 2026-08-20 \
+    --week-open   5400 --week-open-date   2026-08-17
+py engine/risk_engine.py size-equity --account 5000 --entry 14.50 --stop 13.60 --target 16.50 --symbol F
 py engine/risk_engine.py size-option --account 5000 --premium 1.40 --symbol F
 py engine/risk_engine.py size-csp    --account 15000 --cash 15000 --strike 25 --symbol F
 ```
 
-> **Interpreter:** these examples use `py`, the Python Launcher, because on this
-> operator's Windows machine the `python` command is shadowed by a Microsoft Store
-> alias. On macOS or Linux use `python3` instead. If `py` is not found, stop and
-> report it — do not fall back to computing the numbers yourself.
+> **Interpreter — read before the first command, this system runs on more than
+> one OS.** The examples say `py` because on the operator's Windows machine the
+> bare `python` command is shadowed by a Microsoft Store alias that exits
+> without running anything. **`py` is a Windows-only launcher and does not
+> exist on Linux or macOS** — and the scheduled cloud sessions run on Linux.
+>
+> **[HARD]** Use whichever interpreter this machine actually has. Try `py`,
+> then `python3`, then `python`, and use the first that runs. Halt only if
+> **none** of them work. "`py: command not found`" on a Linux box is not a
+> reason to stop the session — it is the expected result there, and stopping on
+> it would silently disable every scheduled run. What you may never do is skip
+> the engine and compute the numbers yourself.
 
 The engine returns `ok`, the quantity, the realized risk %, the **binding
 constraint**, `stop_eligible`, and the reasons for any rejection. Use its numbers
@@ -515,12 +525,20 @@ decisions not to trade.
 - Symbol exposure: $X after this fill (X.X% of account, all instruments in <SYMBOL>)
 - Entry / Limit:   $X.XX   (mark $X.XX, spread X.X%)
 - Stop:            $X.XX   → max loss $X (X.X% of account)
-- Target:          $X.XX   → R:R X.X
+- Target:          $X.XX   → R:R X.X  (engine: rr_verified=<true|false>)
+- Broker stop:     <order id, resting at $X.XX | none — fractional quantity>
+                   (engine: stop_eligible=<true|false>)
 - Time stop:       <date / DTE>
 - Thesis:          <one sentence — the specific, falsifiable claim>
 - Invalidation:    <the observable that proves the thesis wrong>
 - Gates verified:  OI <n>, vol <n>, spread <x>%, DT count <n>/3, tier OK
 ```
+
+**[HARD]** The `Broker stop` line is mandatory on every equity OPEN and is
+never omitted. `none — fractional quantity` is a valid and expected value at
+small account sizes; a *missing* line is not, because it hides whether the
+position has any intraday protection at all. `rr_verified=false` on an OPEN is
+a §7 incident — it means a **[HARD]** rule was never evaluated (§2.0).
 
 On close, append realized P&L, R multiple, hold duration, and one line on whether
 the thesis was right, wrong, or right-for-the-wrong-reason. That last field is

@@ -216,6 +216,38 @@ class TestStructuralIntegrity(unittest.TestCase):
                     self.assertEqual(int(claimed.group(1)), total,
                                      f"{name} claims {claimed.group(1)}, actual {total}")
 
+    def test_per_module_test_counts_in_readme_match_reality(self):
+        """The totals guard only checks the FIRST '<n> tests' in each doc, so the
+        per-file counts in README's Structure block drifted unnoticed (it claimed
+        32 unit tests when there were 65). Pin them individually."""
+        import test_risk_engine as TRE
+        loader = unittest.TestLoader()
+        actual = {
+            "test_risk_engine.py": loader.loadTestsFromModule(TRE).countTestCases(),
+            "test_doc_consistency.py": loader.loadTestsFromModule(
+                sys.modules[__name__]).countTestCases(),
+        }
+        for filename, count in actual.items():
+            with self.subTest(module=filename):
+                m = re.search(rf"{re.escape(filename)}\s+(\d+)\s+(?:unit\s+)?tests", README)
+                self.assertIsNotNone(m, f"README does not state a test count for {filename}")
+                self.assertEqual(int(m.group(1)), count,
+                                 f"README claims {m.group(1)} for {filename}, actual {count}")
+
+    def test_readme_does_not_claim_the_account_is_unfunded(self):
+        """The account was funded on 2026-08-20. A README that still says $0 /
+        unfunded misleads about whether real money is at stake."""
+        self.assertNotRegex(README, r"Account value is \*\*\$0\*\*")
+        self.assertNotIn("unfunded", README)
+
+    def test_fractional_stop_gap_is_documented_where_it_bites(self):
+        """stop_eligible: false means no broker-side stop and no intraday
+        protection. That must be stated in the constitution, the playbook that
+        produces fractional positions, and the operator-facing README."""
+        for name in ("CLAUDE.md", "P1", "README.md"):
+            with self.subTest(doc=name):
+                self.assertIn("stop_eligible", ALL_DOCS[name])
+
     def test_engine_invocations_use_one_consistent_interpreter(self):
         """Mixed `python` / `python3` / `py` across docs means half the commands
         fail on any given machine. Pin them to one."""

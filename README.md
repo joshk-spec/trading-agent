@@ -64,7 +64,7 @@ If it halts on its own, read the reason before clearing.
 py engine/run_all_tests.py
 ```
 
-100 tests, no dependencies beyond stdlib Python.
+103 tests, no dependencies beyond stdlib Python.
 
 (Use `py` on Windows. On macOS or Linux the command is `python3`.) They pin every constitutional
 number — tier boundaries, the 5%/25%/30%/40% caps, the Minimum Viable Unit rule,
@@ -80,8 +80,12 @@ engine wins** and the agent must halt and report it.
 
 ## What is active right now
 
-Account value is **$0** — the account is approved and agent-enabled but
-unfunded. Current tier: **T0**.
+Account value is **$50**, funded and live as of 2026-08-20. Current tier:
+**T0**. Trading runs unattended via the cloud routine
+`trading-agent-daily-session`, weekdays 9:35–15:35 ET, hourly. The local
+Windows task and `run_trade.ps1` are **deliberately disabled** — two schedulers
+on one account race on `state/*.json`; never re-enable one without disabling
+the other.
 
 | Tier | Account value | Unlocks |
 |---|---|---|
@@ -94,6 +98,14 @@ unfunded. Current tier: **T0**.
 At T0 the agent will trade fractional shares and will decline every options
 setup it finds. That is correct behavior, not a malfunction — see §2.3 of
 `CLAUDE.md` for why, with the arithmetic.
+
+**At $50 no position can carry a broker-side stop.** Sizing caps a position at
+25% of the account ($12.50), which is under one share of most liquid names, and
+Robinhood rejects stop orders on fractional quantities. The engine reports this
+as `stop_eligible: false`. Those positions have **no intraday protection** — a
+crash between scheduled runs is only caught at the next run. Whole-share
+positions, and the resting stops that protect them, begin around a $200
+account on a ~$15 stock.
 
 ## Before the first live run
 
@@ -127,8 +139,8 @@ so it will eventually hand you five bad ones at the larger size.
 CLAUDE.md                 constitution — always loaded, binding
 engine/
   risk_engine.py          ALL money math. Single source of truth. Tested.
-  test_risk_engine.py     32 unit tests: sizing, tiers, PDT, drawdown, gates
-  test_doc_consistency.py 35 tests asserting docs and engine agree
+  test_risk_engine.py     65 unit tests: sizing, tiers, PDT, drawdown, gates
+  test_doc_consistency.py 38 tests asserting docs and engine agree
   run_all_tests.py        runs both — the agent runs this before its first order
 playbooks/                strategy specs — read during a run
   P1_equity_momentum.md   T0+  fractional shares, the only T0-viable strategy
