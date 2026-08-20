@@ -68,6 +68,7 @@ MAX_SPREAD_PCT       = 0.05
 ASK_SIZE_MULTIPLE    = 10     # ask_size must be >= this * intended contracts
 
 Kind = Literal["equity", "long_option", "short_put", "short_call"]
+VALID_KINDS = ("equity", "long_option", "short_put", "short_call")
 
 DEFAULT_POSITIONS_FILE = "state/positions.json"
 
@@ -101,14 +102,23 @@ def load_positions(path: str = DEFAULT_POSITIONS_FILE) -> list[Position]:
     exposure silently is worse than crashing."""
     if not os.path.exists(path):
         return []
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        raise ValueError(
+            f"{path} is not valid JSON ({e}). Fix state/positions.json before sizing — "
+            f"a bad file must not silently under-count exposure."
+        ) from e
     positions: list[Position] = []
     for i, p in enumerate(data.get("positions", [])):
         try:
+            kind = p["kind"]
+            if kind not in VALID_KINDS:
+                raise ValueError(f"kind {kind!r} not one of {VALID_KINDS}")
             positions.append(Position(
                 symbol=str(p["symbol"]),
-                kind=p["kind"],
+                kind=kind,
                 quantity=float(p["quantity"]),
                 notional=float(p["notional"]),
             ))
@@ -498,6 +508,11 @@ def check_option_liquidity(
 
 
 # ──────────────────────────────────── CLI ────────────────────────────────────
+def _add_positions_file_arg(s: argparse.ArgumentParser) -> None:
+    s.add_argument("--positions-file", default=DEFAULT_POSITIONS_FILE,
+                    help="JSON file of currently open positions, for MAX_SYMBOL_EXP/MAX_CONCURRENT")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Deterministic risk math. Never compute these by hand.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -505,20 +520,17 @@ def main() -> None:
     s = sub.add_parser("size-equity"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--entry", type=float, required=True); s.add_argument("--stop", type=float, required=True)
     s.add_argument("--symbol", default="")
-    s.add_argument("--positions-file", default=DEFAULT_POSITIONS_FILE,
-                    help="JSON file of currently open positions, for MAX_SYMBOL_EXP/MAX_CONCURRENT")
+    _add_positions_file_arg(s)
 
     s = sub.add_parser("size-option"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--premium", type=float, required=True); s.add_argument("--symbol", default="")
     s.add_argument("--playbook", default="P2")
-    s.add_argument("--positions-file", default=DEFAULT_POSITIONS_FILE,
-                    help="JSON file of currently open positions, for MAX_SYMBOL_EXP/MAX_CONCURRENT")
+    _add_positions_file_arg(s)
 
     s = sub.add_parser("size-csp"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--cash", type=float, required=True); s.add_argument("--strike", type=float, required=True)
     s.add_argument("--symbol", default="")
-    s.add_argument("--positions-file", default=DEFAULT_POSITIONS_FILE,
-                    help="JSON file of currently open positions, for MAX_SYMBOL_EXP/MAX_CONCURRENT")
+    _add_positions_file_arg(s)
 
     s = sub.add_parser("preflight"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--session-open", type=float, default=0.0); s.add_argument("--week-open", type=float, default=0.0)

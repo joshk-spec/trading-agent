@@ -223,8 +223,14 @@ would close a position opened the same session, count day trades in the trailing
 5 business days. At 3, the position must be held overnight or not opened.
 Reserve the 3rd day trade for genuine risk events only.
 
-**[HARD]** A protective stop-limit order (§6 step 9) that fills the same session
-it was placed counts as a day trade exactly like an agent-initiated close. Check
+**[HARD]** A protective stop-limit order (§6 step 9) that fills and thereby
+closes a position **opened the same session** counts as a day trade exactly
+like an agent-initiated close — the test is the entry session, never the
+session the stop order happened to be (re)placed in. This matters because §5
+cancels and replaces the resting stop whenever the trail tightens: after a
+replacement, the order's placement date and the position's entry date can
+differ, so "placed same session as filled" is not a valid stand-in for "opened
+same session as filled" and must not be used as the test. Check
 `get_equity_orders` for fills since the last run — not only orders this session
 placed — before counting; a stop can fill between sessions with no agent
 watching it happen.
@@ -337,7 +343,12 @@ position is closed. The stop was set when you were calm; you are not calmer now.
 at +2R, or any tightening), cancel the existing resting broker stop-limit order
 (`cancel_equity_order`) and place its replacement at the new `stop_price` before
 the session ends (§6 step 9) — the broker-side order must always match the
-current internal stop, never the original one. If a position has no protective
+current internal stop, never the original one. **The §0 autonomy mandate is
+this cancellation's standing user authorization** — `cancel_equity_order`'s own
+tool contract asks to confirm with the user before calling, and running this
+session at all (per the `trade` skill) is that confirmation; do not stall
+waiting on a prompt that will not come in an unattended run, and do not skip
+the replacement because the tool asked for confirmation. If a position has no protective
 stop currently resting at the broker (fractional quantity, or the order was
 never confirmed), it has no intraday protection between sessions — say so in
 the journal every time it's true, don't let it go unmentioned.
