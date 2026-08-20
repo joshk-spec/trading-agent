@@ -327,6 +327,22 @@ def size_equity(
         )
         return r
 
+    # PREFER WHOLE SHARES whenever a whole-share position fits.
+    #
+    # Sizing divides a dollar cap by a share price, so the raw result is almost
+    # never an integer — which meant `stop_eligible` was false at EVERY account
+    # size and the §6 step 9 broker-side protective stop, the only thing that
+    # reacts to a crash between sessions, could never actually be placed.
+    # Flooring to whole shares costs a fraction of a share of exposure and buys
+    # real intraday protection. It only ever REDUCES size, so every cap already
+    # enforced above still holds.
+    #
+    # Below one whole share the position stays fractional and unprotected —
+    # that is the account being too small to hold a protected position, and
+    # `stop_eligible: false` says so rather than hiding it.
+    if shares >= 1:
+        shares = float(math.floor(shares))
+
     # Recompute from the quantity actually orderable, not the pre-floor ideal.
     notional = shares * entry
     risk_dollars = shares * risk_per_share

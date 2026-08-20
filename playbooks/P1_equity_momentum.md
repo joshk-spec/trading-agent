@@ -131,12 +131,18 @@ not a friendlier target.
 
 **Broker-side protection.** Per §6 step 9, every whole-share entry gets a
 resting stop-limit order at the broker as the real intraday circuit breaker
-between sessions — none of the checks above run continuously. P1 permits
-fractional shares (see header), and Robinhood does not accept stop orders on
-fractional quantities, so a fractional-share P1 position has **no broker-side
-stop** and relies entirely on the next scheduled session to catch a breach.
-Record this explicitly in the journal whenever it applies; it is a known gap,
-not an oversight to paper over.
+between sessions — none of the checks above run continuously. Robinhood does
+not accept stop orders on fractional quantities, so **the engine floors to
+whole shares once the position reaches one share**, precisely so that stop can
+be placed. Read `stop_eligible` from the engine; do not judge it by eye.
+
+Below one whole share the position stays fractional and `stop_eligible` is
+`false`: it has **no broker-side stop** and relies entirely on the next
+scheduled session to catch a breach. At a $50 account a $14.50 stock sizes to
+~0.86 shares, so this is the normal T0 case, not an edge case. Record it
+explicitly in the journal every time; it is a known gap, not an oversight to
+paper over — and never round up to one share to escape it, which would breach
+`MAX_POS_NOTIONAL`.
 
 ---
 

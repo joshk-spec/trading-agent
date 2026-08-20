@@ -92,13 +92,28 @@ verbatim in the order and the journal.
 **`stop_eligible`** answers the §6 step 9 question — whether a broker-side
 protective stop can be placed on this quantity — and it is the engine's answer,
 not yours. It is `false` exactly when the sized quantity is fractional. Do not
-re-derive it by inspecting the share count, and never round the quantity to turn
-it `true`; that changes the position size the engine computed (§6 step 9).
+re-derive it by inspecting the share count, and never round the quantity up to
+turn it `true`; that breaches the cap the engine just enforced (§6 step 9).
 
 **Share quantities are floored, never rounded,** to the broker's 6-decimal
 fractional precision. A cap that binds must not be undone by rounding a quantity
 back up over it. The `notional` and `risk_dollars` reported are recomputed from
 the floored quantity, so they describe the order you will actually place.
+
+**Equity sizing prefers WHOLE shares whenever one whole share fits.** Sizing
+divides a dollar cap by a share price, so the raw result is almost never an
+integer — which previously left `stop_eligible` false at *every* account size,
+making the §6 step 9 protective stop unplaceable in practice and the intraday
+crash protection dead on arrival. The engine now floors to whole shares once
+the position reaches one share. This only ever *reduces* size, so every cap
+above still holds, and it is what makes a resting broker stop possible at all.
+
+**Below one whole share the position stays fractional and is unprotected.**
+`stop_eligible: false` then means exactly what it says: a crash between
+sessions will not be caught by anything at the broker, only by the next
+scheduled run. That is the account being too small to hold a protected
+position — state it in the journal (§8), never paper over it, and never round
+up to one share to manufacture eligibility.
 
 **[HARD]** If a number in this document disagrees with the engine, **the engine
 wins** and the discrepancy is a §7 incident — halt and report it. The prose here

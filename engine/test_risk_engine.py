@@ -91,7 +91,11 @@ class TestEquitySizing(unittest.TestCase):
         r = size_equity(1_000, entry=14.50, stop=13.60)
         self.assertTrue(r.ok)
         self.assertEqual(r.binding_constraint, "MAX_POS_NOTIONAL")
-        self.assertAlmostEqual(r.notional, 250.0, places=2)
+        # 250/14.50 = 17.24 shares, floored to 17 whole shares so a broker-side
+        # stop can be placed. At or under the $250 cap, never over.
+        self.assertEqual(r.quantity, 17.0)
+        self.assertAlmostEqual(r.notional, 246.50, places=2)
+        self.assertLessEqual(r.notional, 250.0 + 1e-9)
         self.assertLess(r.risk_pct, 0.05)
 
     def test_p1_realized_risk_ceiling_is_3pct_not_5pct(self):
@@ -147,7 +151,9 @@ class TestSymbolExposure(unittest.TestCase):
         r = size_equity(10_000, entry=14.50, stop=13.60, symbol="F", positions=pos)
         self.assertTrue(r.ok)
         self.assertEqual(r.binding_constraint, "MAX_SYMBOL_EXP")
-        self.assertAlmostEqual(r.notional, 200.0, places=2)
+        # $200 of room / 14.50 = 13.79 shares, floored to 13 whole shares.
+        self.assertEqual(r.quantity, 13.0)
+        self.assertLessEqual(r.notional, 200.0 + 1e-9)
 
 
 class TestOptionsExposureAndCSP(unittest.TestCase):
@@ -334,11 +340,15 @@ class TestStopEligibility(unittest.TestCase):
     """§6 step 9 requires a broker-side stop, which Robinhood rejects on
     fractional quantities. The engine reports this rather than the agent eyeballing it."""
 
-    def test_fractional_quantity_is_not_stop_eligible(self):
+    def test_whole_share_position_is_preferred_so_a_stop_can_be_placed(self):
+        """Raw sizing (2_500/14.50 = 172.41) is fractional, and a fractional
+        position cannot carry a broker-side stop. Flooring to 172 whole shares
+        costs 0.41 shares of exposure and buys real intraday protection."""
         r = size_equity(10_000.0, 14.50, 13.60, "F")
         self.assertTrue(r.ok)
-        self.assertFalse(float(r.quantity).is_integer())
-        self.assertFalse(r.stop_eligible)
+        self.assertEqual(r.quantity, 172.0)
+        self.assertTrue(float(r.quantity).is_integer())
+        self.assertTrue(r.stop_eligible)
 
     def test_whole_share_quantity_is_stop_eligible(self):
         # 25% of 10_000 = 2_500 notional / entry 25.00 = exactly 100 shares
@@ -346,6 +356,31 @@ class TestStopEligibility(unittest.TestCase):
         self.assertTrue(r.ok)
         self.assertEqual(r.quantity, 100.0)
         self.assertTrue(r.stop_eligible)
+
+    def test_sub_one_share_stays_fractional_and_says_it_is_unprotected(self):
+        """A $50 account cannot afford one whole share of a $14.50 stock at a
+        25% notional cap. It is not rounded up to 1 (that would breach the cap)
+        — it stays fractional and reports that no stop can be placed."""
+        r = size_equity(50.0, 14.50, 13.60, "F")
+        self.assertTrue(r.ok)
+        self.assertLess(r.quantity, 1.0)
+        self.assertFalse(r.stop_eligible)
+        self.assertLessEqual(r.notional, 12.5 + 1e-9)
+
+    def test_flooring_to_whole_shares_never_exceeds_a_cap(self):
+        """Flooring only ever reduces size, so every cap enforced before it
+        still holds afterward — across a wide sweep of prices and accounts."""
+        for account in (200.0, 1_000.0, 5_000.0, 25_000.0):
+            for entry in (7.30, 14.50, 63.75, 249.99):
+                with self.subTest(account=account, entry=entry):
+                    r = size_equity(account, entry, entry * 0.93, "F")
+                    if not r.ok:
+                        continue
+                    self.assertLessEqual(r.notional, account * 0.25 + 1e-9)
+                    self.assertLessEqual(r.risk_pct, 0.03 + 1e-9)
+                    if r.quantity >= 1:
+                        self.assertTrue(float(r.quantity).is_integer())
+                        self.assertTrue(r.stop_eligible)
 
     def test_option_contracts_are_always_stop_eligible(self):
         r = size_long_option(10_000.0, 1.40, "F")
@@ -442,7 +477,8 @@ class TestCLIEnforcesExistingPositions(unittest.TestCase):
             os.remove(path)
         self.assertTrue(out["ok"])
         self.assertEqual(out["binding_constraint"], "MAX_SYMBOL_EXP")
-        self.assertAlmostEqual(out["notional"], 200.0, places=2)
+        self.assertEqual(out["quantity"], 13.0)          # 13.79 floored to whole shares
+        self.assertLessEqual(out["notional"], 200.0 + 1e-9)
 
     def test_cli_blocks_sixth_concurrent_position(self):
         path = self._positions_file(
