@@ -7,7 +7,7 @@ marked **[HARD]** is a precondition, not a guideline.
 
 ## Phase 1 — Pre-flight (§3)
 
-0. **Run the test suite first:** `py engine/run_all_tests.py` (103 tests). Any
+0. **Run the test suite first:** `py engine/run_all_tests.py` (108 tests). Any
    failure ⇒ do not trade, report the failure. The risk math must be verified
    before money moves.
 1. Check both halt files. `state/HALT` present ⇒ reconcile, report, **exit**
@@ -38,8 +38,14 @@ marked **[HARD]** is a precondition, not a guideline.
    Non-empty ⇒ a [HARD] halt rule could not be verified ⇒ do not trade
    (§2.0/§2.2); fix `state/marks.json` and re-run preflight.** `halt: false` with
    a non-empty `checks_skipped` is not an all-clear.
-5. Count day trades via `risk_engine.count_day_trades()` against
-   `state/day_trades.json`. Never count them by reading the journal.
+5. **Count day trades with the engine's own command** — never by reading the
+   journal, and never with an ad-hoc script:
+   ```bash
+   py engine/risk_engine.py day-trades --account <total_value>
+   ```
+   It reads `state/day_trades.json` and reports `used`, `available`, and
+   whether PDT applies. A 4th day trade under $25k restricts the account for
+   90 days, so `available` is a hard budget, not a guideline.
 7. List anything expiring within 2 sessions — each needs a decision this run.
 
 Report the pre-flight block before doing anything else.

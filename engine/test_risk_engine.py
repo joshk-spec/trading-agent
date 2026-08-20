@@ -217,6 +217,51 @@ class TestPatternDayTrader(unittest.TestCase):
         self.assertEqual(day_trades_available(10_000, log, today), 0)
 
 
+class TestDayTradesCLI(unittest.TestCase):
+    """A live session had to improvise a `python3 -c` script to count day
+    trades because no subcommand existed, and hit a TypeError passing a string
+    date. PDT is a 90-day account restriction — it gets a tested command."""
+
+    def test_count_day_trades_accepts_a_string_date(self):
+        log = [{"date": "2026-08-19"}, {"date": "2026-08-20"}]
+        self.assertEqual(count_day_trades(log, "2026-08-20"), 2)
+        self.assertEqual(count_day_trades(log, date(2026, 8, 20)), 2)
+
+    def test_day_trades_available_accepts_a_string_date(self):
+        log = [{"date": "2026-08-20"}]
+        self.assertEqual(day_trades_available(10_000, log, "2026-08-20"), 2)
+
+    def _run(self, *args):
+        r = subprocess.run([sys.executable, ENGINE_PATH, "day-trades", *args],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_cli_counts_from_a_log_file(self):
+        f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump({"day_trades": [{"date": "2026-08-18"}, {"date": "2026-08-20"}]}, f)
+        f.close()
+        try:
+            out = self._run("--account", "10000", "--log-file", f.name, "--today", "2026-08-20")
+        finally:
+            os.remove(f.name)
+        self.assertEqual(out["used"], 2)
+        self.assertEqual(out["available"], 1)
+        self.assertTrue(out["pdt_applies"])
+
+    def test_cli_reports_exemption_above_25k(self):
+        out = self._run("--account", "25000", "--log-file", "no/such/file.json",
+                        "--today", "2026-08-20")
+        self.assertFalse(out["pdt_applies"])
+        self.assertEqual(out["used"], 0)
+
+    def test_cli_missing_log_is_zero_not_a_crash(self):
+        out = self._run("--account", "10000", "--log-file", "no/such/file.json",
+                        "--today", "2026-08-20")
+        self.assertEqual(out["used"], 0)
+        self.assertEqual(out["available"], 3)
+
+
 class TestDrawdown(unittest.TestCase):
     def test_daily_halt_triggers_at_exactly_10pct(self):
         self.assertTrue(check_drawdown(900.0, 1_000.0, 1_000.0).halt)

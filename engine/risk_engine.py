@@ -496,10 +496,16 @@ def _business_days_back(anchor: date, n: int) -> date:
     return d
 
 
-def count_day_trades(log: Sequence[dict], today: date | None = None) -> int:
+def count_day_trades(log: Sequence[dict], today: date | str | None = None) -> int:
     """Day trades inside the rolling 5-business-day window ending today.
-    `log` entries need a 'date' key of YYYY-MM-DD."""
-    today = today or date.today()
+    `log` entries need a 'date' key of YYYY-MM-DD.
+
+    `today` accepts a date or a 'YYYY-MM-DD' string. It used to accept only a
+    date, and a string raised a TypeError from inside _business_days_back with
+    no hint about the cause — a live session hit exactly that on 2026-08-20 and
+    had to guess the fix mid-run. PDT is a 90-day account restriction; counting
+    it must not be the fragile step."""
+    today = _as_date(today) or date.today()
     window_start = _business_days_back(today, PDT_WINDOW_DAYS)
     n = 0
     for e in log:
@@ -509,7 +515,8 @@ def count_day_trades(log: Sequence[dict], today: date | None = None) -> int:
     return n
 
 
-def day_trades_available(account_value: float, log: Sequence[dict], today: date | None = None) -> int:
+def day_trades_available(account_value: float, log: Sequence[dict],
+                         today: date | str | None = None) -> int:
     """How many day trades remain. Unlimited (represented as 999) at/above $25k."""
     if account_value >= PDT_EXEMPT_ABOVE:
         return 999
@@ -692,6 +699,17 @@ def main() -> None:
     _add_symbol_arg(s)
     _add_positions_file_arg(s)
 
+    # There was no subcommand for this, so a live session on 2026-08-20 wrote an
+    # ad-hoc `python3 -c` script to count day trades — improvising code for a
+    # [HARD] number, which §2.0 exists to prevent, and hitting a TypeError doing
+    # it. PDT is a 90-day restriction; it gets a first-class command.
+    s = sub.add_parser("day-trades",
+                       help="Day trades used/remaining in the rolling 5-business-day window.")
+    s.add_argument("--account", type=float, required=True)
+    s.add_argument("--log-file", default="state/day_trades.json",
+                   help="JSON file with a day_trades array of {date: YYYY-MM-DD} entries.")
+    s.add_argument("--today", default="", help="Override today's date (YYYY-MM-DD), for testing.")
+
     s = sub.add_parser("preflight"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--session-open", type=float, default=0.0); s.add_argument("--week-open", type=float, default=0.0)
     s.add_argument("--session-open-date", default="",
@@ -711,6 +729,28 @@ def main() -> None:
     elif a.cmd == "size-csp":
         positions = load_positions(a.positions_file)
         print(size_csp(a.account, a.cash, a.strike, a.symbol, positions).to_json())
+    elif a.cmd == "day-trades":
+        today = _as_date(a.today) or date.today()
+        try:
+            with open(a.log_file, "r", encoding="utf-8") as f:
+                entries = json.load(f).get("day_trades", [])
+        except FileNotFoundError:
+            entries = []
+        except (json.JSONDecodeError, OSError) as e:
+            raise ValueError(
+                f"{a.log_file} is not valid JSON ({e}). Fix it before trading — an "
+                f"unreadable PDT log must not be treated as zero day trades."
+            ) from e
+        used = count_day_trades(entries, today)
+        available = day_trades_available(a.account, entries, today)
+        print(json.dumps({
+            "today": today.isoformat(),
+            "window_start": _business_days_back(today, PDT_WINDOW_DAYS).isoformat(),
+            "used": used,
+            "available": available,
+            "limit": PDT_LIMIT,
+            "pdt_applies": a.account < PDT_EXEMPT_ABOVE,
+        }, indent=2))
     elif a.cmd == "preflight":
         d = check_drawdown(a.account, a.session_open, a.week_open,
                            a.session_open_date, a.week_open_date)
