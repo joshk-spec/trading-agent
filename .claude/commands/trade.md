@@ -7,7 +7,7 @@ marked **[HARD]** is a precondition, not a guideline.
 
 ## Phase 1 — Pre-flight (§3)
 
-0. **Run the test suite first:** `py engine/run_all_tests.py` (94 tests). Any
+0. **Run the test suite first:** `py engine/run_all_tests.py` (100 tests). Any
    failure ⇒ do not trade, report the failure. The risk math must be verified
    before money moves.
 1. Check both halt files. `state/HALT` present ⇒ reconcile, report, **exit**
@@ -79,6 +79,14 @@ step 9), or record why one couldn't be placed** → journal (record the engine's
 **[HARD]** Any quantity in an order payload must have come from the engine. If you
 find yourself typing a share count or contract count you calculated yourself,
 stop and run the engine.
+
+**[HARD]** Before any P1 entry, check the engine's own verdict flags — a result
+can be `ok: true` while a [HARD] rule went unchecked:
+- `rr_verified: false` ⇒ you did not pass `--target`, so the 2.0 minimum
+  reward:risk was never tested. Do not enter. Re-run with the structural target.
+- `stop_eligible: false` ⇒ the quantity is fractional and **no broker-side stop
+  can be placed** (§6 step 9). The position will have no intraday protection
+  between runs. Journal that explicitly; never round up to one share to escape it.
 
 **[HARD]** Whether a broker stop can be placed is the engine's `stop_eligible`,
 not your own read of the share count. `false` ⇒ fractional ⇒ no broker-side stop

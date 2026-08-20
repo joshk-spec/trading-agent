@@ -396,6 +396,52 @@ class TestMinimumRewardRisk(unittest.TestCase):
         self.assertFalse(r.ok)
         self.assertTrue(any("reward:risk" in x for x in r.reasons))
 
+    def test_omitting_target_leaves_rr_unverified_not_silently_passed(self):
+        """The check is optional at the function level, so it must SAY it did
+        not run. Otherwise omitting --target is the quiet way to skip a [HARD]
+        rule — the same trap the drawdown marks already closed."""
+        r = size_equity(10_000.0, 14.50, 13.60, "F")
+        self.assertTrue(r.ok)
+        self.assertFalse(r.rr_verified)
+
+    def test_passing_target_sets_rr_verified(self):
+        r = size_equity(10_000.0, 14.50, 13.60, "F", (), 16.50)  # 2.2R
+        self.assertTrue(r.ok)
+        self.assertTrue(r.rr_verified)
+
+
+class TestSymbolIsRequiredOnTheCLI(unittest.TestCase):
+    """Without --symbol, symbol_exposure() looks up a name nothing is held
+    under, returns 0, and MAX_SYMBOL_EXP passes trivially. The CLI must refuse
+    rather than size against a cap that cannot bind."""
+
+    def _run(self, *args):
+        return subprocess.run([sys.executable, ENGINE_PATH, *args],
+                              capture_output=True, text=True)
+
+    def test_size_equity_requires_symbol(self):
+        r = self._run("size-equity", "--account", "10000", "--entry", "14.50", "--stop", "13.60")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--symbol", r.stderr)
+
+    def test_size_option_requires_symbol(self):
+        r = self._run("size-option", "--account", "10000", "--premium", "1.40")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--symbol", r.stderr)
+
+    def test_size_csp_requires_symbol(self):
+        r = self._run("size-csp", "--account", "15000", "--cash", "15000", "--strike", "25")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--symbol", r.stderr)
+
+    def test_symbol_cap_actually_binds_when_supplied(self):
+        """The positive case: with the symbol supplied and exposure already
+        near the 30% ceiling, the cap must bind rather than pass."""
+        pos = [Position("F", "equity", 190, 2_800.0)]      # 28% of 10k
+        r = size_equity(10_000.0, 14.50, 13.60, "F", pos)
+        self.assertTrue(r.ok)
+        self.assertEqual(r.binding_constraint, "MAX_SYMBOL_EXP")
+
     def test_target_at_exactly_2r_is_accepted(self):
         r = size_equity(10_000.0, 14.50, 13.60, "F", (), 16.30)  # exactly 2.0R
         self.assertTrue(r.ok, r.reasons)

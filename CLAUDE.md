@@ -108,6 +108,14 @@ crash protection dead on arrival. The engine now floors to whole shares once
 the position reaches one share. This only ever *reduces* size, so every cap
 above still holds, and it is what makes a resting broker stop possible at all.
 
+**[HARD] `rr_verified` must be `true` on any P1 entry.** The engine can only
+check P1's 2.0 minimum reward:risk if you pass `--target`; with no target it
+sizes fine and reports `rr_verified: false`, meaning *the rule was never
+checked* — not that it passed. Never open a P1 position on a result carrying
+`rr_verified: false`. Derive the target from structure first (P1 EXITS), then
+pass it; choosing a number that clears 2.0 is the same inversion as widening a
+stop to fit a size.
+
 **Below one whole share the position stays fractional and is unprotected.**
 `stop_eligible: false` then means exactly what it says: a crash between
 sessions will not be caught by anything at the broker, only by the next

@@ -149,6 +149,12 @@ class SizeResult:
     # intraday protection between sessions and the journal must say so.
     # Always True for option contracts, which are indivisible by construction.
     stop_eligible: bool = True
+    # True only when a target was supplied AND it cleared P1's [HARD] 2.0
+    # minimum reward:risk. False means the rule was NOT checked — omitting
+    # --target must not become the quiet way to skip a [HARD] rule, the same
+    # trap the drawdown marks already closed. A P1 entry requires True.
+    # Not applicable to options sizing, which has no structural target.
+    rr_verified: bool = False
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -271,6 +277,7 @@ def size_equity(
         )
         return r
 
+    rr_verified = False
     if target:
         if target <= entry:
             r.reasons.append(
@@ -285,6 +292,7 @@ def size_equity(
                 f"Find a better entry or a real structural target — do not move the stop."
             )
             return r
+        rr_verified = True
 
     budget = max_risk_trade(account_value, "P1")
     shares = budget / risk_per_share
@@ -354,6 +362,7 @@ def size_equity(
         risk_pct=risk_dollars / account_value,
         binding_constraint=binding,
         stop_eligible=float(shares).is_integer(),
+        rr_verified=rr_verified,
     )
 
 
@@ -646,6 +655,15 @@ def check_option_liquidity(
 
 
 # ──────────────────────────────────── CLI ────────────────────────────────────
+def _add_symbol_arg(s: argparse.ArgumentParser) -> None:
+    """REQUIRED, deliberately. With no symbol, symbol_exposure() looks up a name
+    nothing is held under, returns 0, and MAX_SYMBOL_EXP passes trivially — the
+    cap disabling itself silently, the same trap as an unpassed drawdown mark."""
+    s.add_argument("--symbol", required=True,
+                   help="Underlying symbol. Required: without it the MAX_SYMBOL_EXP "
+                        "lookup returns 0 and that cap silently passes.")
+
+
 def _add_positions_file_arg(s: argparse.ArgumentParser) -> None:
     s.add_argument("--positions-file", default=DEFAULT_POSITIONS_FILE,
                     help="JSON file of currently open positions, for MAX_SYMBOL_EXP/MAX_CONCURRENT")
@@ -657,19 +675,21 @@ def main() -> None:
 
     s = sub.add_parser("size-equity"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--entry", type=float, required=True); s.add_argument("--stop", type=float, required=True)
-    s.add_argument("--symbol", default="")
+    _add_symbol_arg(s)
     s.add_argument("--target", type=float, default=0.0,
-                   help="Structural target. When given, enforces P1's 2.0 minimum reward:risk.")
+                   help="Structural target. Enforces P1's 2.0 minimum reward:risk and sets "
+                        "rr_verified. Omitting it leaves rr_verified false — a P1 entry needs true.")
     _add_positions_file_arg(s)
 
     s = sub.add_parser("size-option"); s.add_argument("--account", type=float, required=True)
-    s.add_argument("--premium", type=float, required=True); s.add_argument("--symbol", default="")
+    s.add_argument("--premium", type=float, required=True)
+    _add_symbol_arg(s)
     s.add_argument("--playbook", default="P2")
     _add_positions_file_arg(s)
 
     s = sub.add_parser("size-csp"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--cash", type=float, required=True); s.add_argument("--strike", type=float, required=True)
-    s.add_argument("--symbol", default="")
+    _add_symbol_arg(s)
     _add_positions_file_arg(s)
 
     s = sub.add_parser("preflight"); s.add_argument("--account", type=float, required=True)
