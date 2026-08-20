@@ -86,8 +86,19 @@ py engine/risk_engine.py size-csp    --account 15000 --cash 15000 --strike 25 --
 > report it — do not fall back to computing the numbers yourself.
 
 The engine returns `ok`, the quantity, the realized risk %, the **binding
-constraint**, and the reasons for any rejection. Use its numbers verbatim in the
-order and the journal.
+constraint**, `stop_eligible`, and the reasons for any rejection. Use its numbers
+verbatim in the order and the journal.
+
+**`stop_eligible`** answers the §6 step 9 question — whether a broker-side
+protective stop can be placed on this quantity — and it is the engine's answer,
+not yours. It is `false` exactly when the sized quantity is fractional. Do not
+re-derive it by inspecting the share count, and never round the quantity to turn
+it `true`; that changes the position size the engine computed (§6 step 9).
+
+**Share quantities are floored, never rounded,** to the broker's 6-decimal
+fractional precision. A cap that binds must not be undone by rounding a quantity
+back up over it. The `notional` and `risk_dollars` reported are recomputed from
+the floored quantity, so they describe the order you will actually place.
 
 **[HARD]** If a number in this document disagrees with the engine, **the engine
 wins** and the discrepancy is a §7 incident — halt and report it. The prose here
@@ -189,6 +200,15 @@ any circumstance, for any reason, however convincing.**
 
 **[HARD]** If `state/HALT` exists at session start, or `state/HALT_TODAY` exists
 with today's date, the run is: reconcile, report, exit. No orders.
+
+**[HARD] A halt check that could not run is not a passed halt check.** `preflight`
+returns `checks_skipped`, listing any drawdown check it could not evaluate because
+the corresponding mark in `state/marks.json` was missing or non-positive. Both
+`--session-open` and `--week-open` default to `0.0`, so **omitting them produces
+`halt: false` while silently evaluating nothing.** If `checks_skipped` is
+non-empty, treat the run as blocked under §2.0 — you may not verify a **[HARD]**
+rule, therefore you do not trade. Fix `state/marks.json` and re-run preflight;
+never proceed on an all-clear the engine did not actually compute.
 
 ### 2.3 The Minimum Viable Unit rule — read this twice
 

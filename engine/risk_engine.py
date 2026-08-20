@@ -46,7 +46,11 @@ WEEKLY_HALT_PCT      = 0.20   # -20% vs week open
 MIN_ACCOUNT_VALUE    = 50.0   # below this nothing is executable (§7)
 
 P1_MAX_STOP_PCT      = 0.12   # P1 rejects stops wider than 12% of entry
+P1_MIN_RR            = 2.0    # P1 minimum reward:risk at entry
 CSP_MAX_COLLATERAL_PCT = 0.25 # single CSP collateral ceiling
+
+# Robinhood accepts fractional share quantities to 6 decimal places.
+SHARE_DECIMALS       = 6
 
 PDT_LIMIT            = 3      # day trades per rolling 5 business days
 PDT_WINDOW_DAYS      = 5      # business days
@@ -139,6 +143,12 @@ class SizeResult:
     risk_pct: float = 0.0
     binding_constraint: str = ""
     reasons: list[str] = field(default_factory=list)
+    # True when the quantity is a whole number of shares, i.e. a broker-side
+    # protective stop (§6 step 9) CAN be placed. Robinhood rejects stop orders
+    # on fractional quantities, so a False here means the position will have no
+    # intraday protection between sessions and the journal must say so.
+    # Always True for option contracts, which are indivisible by construction.
+    stop_eligible: bool = True
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -231,10 +241,16 @@ def size_equity(
     stop: float,
     symbol: str = "",
     positions: Sequence[Position] = (),
+    target: float = 0.0,
 ) -> SizeResult:
     """P1 equity sizing. Fractional shares permitted, so the risk target is
     reachable — but MAX_POS_NOTIONAL almost always binds first, which means
-    realized risk lands well under 5%. That is intended; report the realized number."""
+    realized risk lands well under 5%. That is intended; report the realized number.
+
+    `target`, when supplied, is checked against P1's [HARD] minimum reward:risk
+    of 2.0 so that rule is enforced by code rather than by the agent's arithmetic.
+    Left at 0.0 the check is skipped, for callers sizing something other than a
+    fresh P1 entry."""
     r = SizeResult(ok=False)
 
     if entry <= 0 or stop <= 0:
@@ -254,6 +270,21 @@ def size_equity(
             f"stop is {stop_pct:.2%} of entry, P1 rejects wider than {P1_MAX_STOP_PCT:.0%} — too volatile"
         )
         return r
+
+    if target:
+        if target <= entry:
+            r.reasons.append(
+                f"target ${target:.2f} must be above entry ${entry:.2f} (long only)"
+            )
+            return r
+        rr = (target - entry) / risk_per_share
+        if rr < P1_MIN_RR - 1e-9:
+            r.reasons.append(
+                f"reward:risk {rr:.2f} < {P1_MIN_RR:.1f} minimum "
+                f"(entry ${entry:.2f}, stop ${stop:.2f}, target ${target:.2f}). "
+                f"Find a better entry or a real structural target — do not move the stop."
+            )
+            return r
 
     budget = max_risk_trade(account_value, "P1")
     shares = budget / risk_per_share
@@ -284,14 +315,29 @@ def size_equity(
         r.reasons.extend(violations)
         return r
 
+    # FLOOR, never round, to the broker's fractional precision. round() can go
+    # UP, which would push notional and risk back above the cap that was just
+    # enforced — a cap that binds must not be undone by presentation rounding.
+    scale = 10 ** SHARE_DECIMALS
+    shares = math.floor(shares * scale) / scale
+    if shares <= 0:
+        r.reasons.append(
+            f"sized quantity rounds to zero shares at {SHARE_DECIMALS}dp "
+            f"(entry ${entry:,.2f} vs available room) — skip"
+        )
+        return r
+
+    # Recompute from the quantity actually orderable, not the pre-floor ideal.
+    notional = shares * entry
     risk_dollars = shares * risk_per_share
     return SizeResult(
         ok=True,
-        quantity=round(shares, 6),
+        quantity=shares,
         notional=round(notional, 2),
         risk_dollars=round(risk_dollars, 2),
         risk_pct=risk_dollars / account_value,
         binding_constraint=binding,
+        stop_eligible=float(shares).is_integer(),
     )
 
 
@@ -452,10 +498,27 @@ class HaltDecision:
     reasons: list[str] = field(default_factory=list)
     daily_pct: float = 0.0
     weekly_pct: float = 0.0
+    # Halt checks that could NOT be evaluated because their mark was missing or
+    # non-positive. A halt=False carrying entries here does not mean "no
+    # drawdown breach" — it means the question was never asked. §2.0 forbids
+    # trading on a [HARD] rule you cannot verify, so a non-empty list must be
+    # treated as blocking, not as an all-clear.
+    checks_skipped: list[str] = field(default_factory=list)
 
 
 def check_drawdown(account_value: float, session_open: float, week_open: float) -> HaltDecision:
     d = HaltDecision(halt=False)
+
+    if not (session_open and session_open > 0):
+        d.checks_skipped.append(
+            "DAILY_HALT not evaluated: session-open mark missing or non-positive. "
+            "Populate state/marks.json before trading (§3 step 5)."
+        )
+    if not (week_open and week_open > 0):
+        d.checks_skipped.append(
+            "WEEKLY_HALT not evaluated: week-open mark missing or non-positive. "
+            "Populate state/marks.json before trading (§3 step 5)."
+        )
 
     if session_open and session_open > 0:
         d.daily_pct = (account_value - session_open) / session_open
@@ -520,6 +583,8 @@ def main() -> None:
     s = sub.add_parser("size-equity"); s.add_argument("--account", type=float, required=True)
     s.add_argument("--entry", type=float, required=True); s.add_argument("--stop", type=float, required=True)
     s.add_argument("--symbol", default="")
+    s.add_argument("--target", type=float, default=0.0,
+                   help="Structural target. When given, enforces P1's 2.0 minimum reward:risk.")
     _add_positions_file_arg(s)
 
     s = sub.add_parser("size-option"); s.add_argument("--account", type=float, required=True)
@@ -538,7 +603,7 @@ def main() -> None:
     a = p.parse_args()
     if a.cmd == "size-equity":
         positions = load_positions(a.positions_file)
-        print(size_equity(a.account, a.entry, a.stop, a.symbol, positions).to_json())
+        print(size_equity(a.account, a.entry, a.stop, a.symbol, positions, a.target).to_json())
     elif a.cmd == "size-option":
         positions = load_positions(a.positions_file)
         print(size_long_option(a.account, a.premium, a.symbol, positions, a.playbook).to_json())
@@ -554,6 +619,7 @@ def main() -> None:
             "pdt_applies": a.account < PDT_EXEMPT_ABOVE,
             "halt": d.halt, "reasons": d.reasons,
             "daily_pct": round(d.daily_pct, 4), "weekly_pct": round(d.weekly_pct, 4),
+            "checks_skipped": d.checks_skipped,
         }, indent=2))
 
 

@@ -7,7 +7,7 @@ marked **[HARD]** is a precondition, not a guideline.
 
 ## Phase 1 — Pre-flight (§3)
 
-0. **Run the test suite first:** `py engine/run_all_tests.py` (73 tests). Any
+0. **Run the test suite first:** `py engine/run_all_tests.py` (86 tests). Any
    failure ⇒ do not trade, report the failure. The risk math must be verified
    before money moves.
 1. Check both halt files. `state/HALT` present ⇒ reconcile, report, **exit**
@@ -28,7 +28,11 @@ marked **[HARD]** is a precondition, not a guideline.
      --account <total_value> --session-open <marks> --week-open <marks>
    ```
    Report its output verbatim: tier, playbooks live, max risk per trade, whether
-   PDT applies, and any halt reasons.
+   PDT applies, and any halt reasons. **Both mark flags default to `0.0`, and a
+   missing mark silently evaluates nothing — so check `checks_skipped` in the
+   output. Non-empty ⇒ a [HARD] halt rule could not be verified ⇒ do not trade
+   (§2.0/§2.2); fix `state/marks.json` and re-run preflight.** `halt: false` with
+   a non-empty `checks_skipped` is not an all-clear.
 5. Count day trades via `risk_engine.count_day_trades()` against
    `state/day_trades.json`. Never count them by reading the journal.
 7. List anything expiring within 2 sessions — each needs a decision this run.
@@ -59,7 +63,8 @@ expected, particularly at T0.
 ## Phase 4 — Execute (§6)
 
 Full sequence per order: live quote → `risk_engine.check_option_liquidity()` →
-limit price → **size via the engine** (`size-equity` / `size-option` / `size-csp`)
+limit price → **size via the engine** (`size-equity` / `size-option` / `size-csp`;
+pass `--target` on P1 so the engine enforces the 2.0 minimum reward:risk)
 → re-verify all [HARD] rules per §6 step 5, including `MAX_SYMBOL_EXP` summed
 across equity and options in that underlying → `review_*_order` → place → confirm
 fill → **for equity entries, place the resting protective stop-limit order (§6
@@ -69,6 +74,11 @@ step 9), or record why one couldn't be placed** → journal (record the engine's
 **[HARD]** Any quantity in an order payload must have come from the engine. If you
 find yourself typing a share count or contract count you calculated yourself,
 stop and run the engine.
+
+**[HARD]** Whether a broker stop can be placed is the engine's `stop_eligible`,
+not your own read of the share count. `false` ⇒ fractional ⇒ no broker-side stop
+exists for that position; journal `Broker stop: none — fractional quantity`.
+Never round the quantity to make `stop_eligible` true.
 
 ## Phase 5 — Close out
 

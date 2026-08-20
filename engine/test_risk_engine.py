@@ -224,6 +224,90 @@ class TestDrawdown(unittest.TestCase):
     def test_account_floor_halts(self):
         self.assertTrue(check_drawdown(49.0, 49.0, 49.0).halt)
 
+    def test_missing_marks_are_reported_not_silently_passed(self):
+        """halt=False with a missing mark means 'never asked', not 'all clear'.
+        The preflight CLI defaults both marks to 0.0, so without this the
+        primary drawdown safety mechanism disables itself silently."""
+        d = check_drawdown(1_000.0, 0.0, 0.0)
+        self.assertFalse(d.halt)
+        self.assertEqual(len(d.checks_skipped), 2)
+        self.assertTrue(any("DAILY_HALT not evaluated" in s for s in d.checks_skipped))
+        self.assertTrue(any("WEEKLY_HALT not evaluated" in s for s in d.checks_skipped))
+
+    def test_present_marks_skip_nothing(self):
+        d = check_drawdown(1_000.0, 1_000.0, 1_000.0)
+        self.assertEqual(d.checks_skipped, [])
+
+    def test_one_missing_mark_reports_only_that_one(self):
+        d = check_drawdown(1_000.0, 1_000.0, 0.0)
+        self.assertEqual(len(d.checks_skipped), 1)
+        self.assertIn("WEEKLY_HALT", d.checks_skipped[0])
+
+
+class TestEquityQuantityPrecision(unittest.TestCase):
+    """A cap that binds must not be undone by presentation rounding."""
+
+    def test_quantity_is_floored_so_notional_never_exceeds_cap(self):
+        r = size_equity(10_000.0, 14.5077, 13.6, "F")
+        self.assertTrue(r.ok)
+        cap = 10_000.0 * 0.25
+        self.assertLessEqual(r.notional, cap + 0.01)
+        # quantity must be representable at the broker's 6dp precision
+        self.assertEqual(r.quantity, round(r.quantity, 6))
+
+    def test_reported_risk_matches_the_floored_quantity(self):
+        r = size_equity(10_000.0, 14.5077, 13.6, "F")
+        expected = r.quantity * (14.5077 - 13.6)
+        self.assertAlmostEqual(r.risk_dollars, round(expected, 2), places=2)
+
+
+class TestStopEligibility(unittest.TestCase):
+    """§6 step 9 requires a broker-side stop, which Robinhood rejects on
+    fractional quantities. The engine reports this rather than the agent eyeballing it."""
+
+    def test_fractional_quantity_is_not_stop_eligible(self):
+        r = size_equity(10_000.0, 14.50, 13.60, "F")
+        self.assertTrue(r.ok)
+        self.assertFalse(float(r.quantity).is_integer())
+        self.assertFalse(r.stop_eligible)
+
+    def test_whole_share_quantity_is_stop_eligible(self):
+        # 25% of 10_000 = 2_500 notional / entry 25.00 = exactly 100 shares
+        r = size_equity(10_000.0, 25.00, 23.00, "F")
+        self.assertTrue(r.ok)
+        self.assertEqual(r.quantity, 100.0)
+        self.assertTrue(r.stop_eligible)
+
+    def test_option_contracts_are_always_stop_eligible(self):
+        r = size_long_option(10_000.0, 1.40, "F")
+        self.assertTrue(r.ok)
+        self.assertTrue(r.stop_eligible)
+
+
+class TestMinimumRewardRisk(unittest.TestCase):
+    """P1's [HARD] 2.0 minimum R:R was prose-only; the engine now enforces it."""
+
+    def test_target_below_2r_is_rejected(self):
+        r = size_equity(10_000.0, 14.50, 13.60, "F", (), 15.40)  # 1.0R
+        self.assertFalse(r.ok)
+        self.assertTrue(any("reward:risk" in x for x in r.reasons))
+
+    def test_target_at_exactly_2r_is_accepted(self):
+        r = size_equity(10_000.0, 14.50, 13.60, "F", (), 16.30)  # exactly 2.0R
+        self.assertTrue(r.ok, r.reasons)
+
+    def test_target_above_2r_is_accepted(self):
+        r = size_equity(10_000.0, 14.50, 13.60, "F", (), 18.00)
+        self.assertTrue(r.ok, r.reasons)
+
+    def test_omitted_target_skips_the_check(self):
+        self.assertTrue(size_equity(10_000.0, 14.50, 13.60, "F").ok)
+
+    def test_target_below_entry_is_rejected(self):
+        r = size_equity(10_000.0, 14.50, 13.60, "F", (), 14.00)
+        self.assertFalse(r.ok)
+        self.assertTrue(any("must be above entry" in x for x in r.reasons))
+
 
 class TestLoadPositions(unittest.TestCase):
     """load_positions() is what closes the gap where the CLI never enforced

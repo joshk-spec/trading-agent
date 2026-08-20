@@ -114,6 +114,21 @@ never the reverse.
 structure — prior high, measured move, or a resistance level — not by
 multiplying the stop by two and calling it a target.
 
+Pass that structural target to the engine and let it enforce the ratio, rather
+than checking it by hand:
+
+```bash
+py engine/risk_engine.py size-equity \
+  --account <live> --entry <entry> --stop <stop_price> \
+  --target <structural_target> --symbol <SYM>
+```
+
+**[HARD]** Derive the target from structure *first*, then pass it. Choosing a
+target by asking what number would clear 2.0 is the same inversion as widening a
+stop to fit a position — it makes the check meaningless. The engine rejects the
+trade when reward:risk lands under 2.0; that rejection means find a better entry,
+not a friendlier target.
+
 **Broker-side protection.** Per §6 step 9, every whole-share entry gets a
 resting stop-limit order at the broker as the real intraday circuit breaker
 between sessions — none of the checks above run continuously. P1 permits
