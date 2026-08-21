@@ -103,16 +103,54 @@ never the reverse.
 
 | Trigger | Action |
 |---|---|
-| Stop hit (close below `stop_price`) | Exit full. Non-negotiable. |
+| Stop touched intraday (`low <= stop_price`) | Exit full. Non-negotiable. |
 | +1R unrealized | Trail stop to breakeven |
 | +2R unrealized | Trim 1/2, trail remainder at 1.5 ATR |
 | Close below 20-day EMA for 2 consecutive sessions | Exit full |
 | 20 sessions elapsed without reaching +1R | Exit full — thesis expired |
 | Earnings date enters the horizon | Exit before the print. Always. |
 
-**[HARD]** Minimum reward:risk at entry is 2.0. Compute the target from real
-structure — prior high, measured move, or a resistance level — not by
-multiplying the stop by two and calling it a target.
+**[HARD] The stop is an INTRADAY touch, not a close.** An earlier draft of this
+table said "close below `stop_price`", which contradicted §6 step 9 — that step
+rests a stop-**limit** order at the broker, and a resting stop-limit triggers
+the moment price touches it, not at the closing bell. A wick through the stop
+that closes back above it is a full loss under one reading and a non-event
+under the other; the documents cannot each describe a different exit. The
+resting broker order is the authority, so the intraday touch is the rule.
+
+*Exception — fractional positions.* Below one whole share no broker stop can
+exist (see **Broker-side protection** below), so nothing enforces the stop
+intraday. There the stop is necessarily evaluated at the next scheduled run,
+against that session's price. Journal it as such: the position is unprotected
+between runs and may be exited well below `stop_price`.
+
+**[HARD] Minimum reward:risk at entry is 2.0, and the target is the MEASURED
+MOVE:**
+
+```
+target = swing_high + (swing_high - pullback_low)
+```
+
+where `swing_high` and `pullback_low` are the same values used to compute the
+stop. This is not one option among several — it is the rule.
+
+*Why this is pinned rather than left open.* This playbook used to say "prior
+high, measured move, or a resistance level," and that ambiguity made P1
+**unexecutable**. A 15-year backtest over 69 liquid names (239,917 bar-days)
+found 341 candidates clearing every other condition and **zero** clearing
+reward:risk when the target was read as a prior high. The cause is geometric:
+the entry trigger requires a close above the prior session's high, so by the
+time an entry is permitted price has already recovered to a median **2.09%**
+below the 60-day high, while the structural stop sits a median **4.01%** below
+entry — a reward:risk near 0.5. Clearing 2.0 against the 52-week high would
+require a stop inside 1.30% of entry; this playbook's stop rule produces 4.01%.
+The measured move is the only reading that is both genuinely structural and
+satisfiable (32.6% of candidates clear 2.0). See `research/FINDINGS.md`.
+
+**[HARD]** The measured move is derived from the pullback that already
+happened — it is not a number you choose. Projecting a larger multiple of the
+retracement to make a trade qualify (a 2× projection clears 2.0 for 97.9% of
+candidates) is exactly the inversion this section forbids.
 
 Pass that structural target to the engine and let it enforce the ratio, rather
 than checking it by hand:

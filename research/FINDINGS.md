@@ -129,11 +129,67 @@ is a real, widely-documented effect. What it says is that **this particular
 parameterisation, on this universe, over this period, shows no measurable
 edge — and cannot execute at all as literally written.**
 
-## Decisions this leaves open (all are the operator's, not the agent's)
+---
 
-1. Resolve the target definition in `playbooks/P1_equity_momentum.md`. As
-   written, P1 is unexecutable. It needs to name one reading.
-2. Resolve close-based vs intraday stops between the playbook and §6 step 9.
-3. Re-examine the 20-EMA exit — the single largest source of negative R.
-4. Decide whether to keep P1 at all, given no demonstrated edge, before adding
-   capital against it.
+# Resolutions applied 2026-08-21
+
+## 1. Target definition — FIXED
+
+`playbooks/P1_equity_momentum.md` now names exactly one rule:
+
+```
+target = swing_high + (swing_high - pullback_low)     # measured move
+```
+
+The old menu ("prior high, measured move, or a resistance level") made P1
+unexecutable under its most natural reading. Pinned by
+`test_f20_p1_names_exactly_one_target_rule` and
+`test_f21_the_unexecutable_target_reading_stays_documented`. The old reading
+remains reproducible with `--target-mode prior_high`, which still yields 0
+signals in 15 years.
+
+## 2. Stop model — FIXED
+
+P1's exit table now reads **"Stop touched intraday (`low <= stop_price`)"**,
+matching the resting stop-limit that CLAUDE.md §6 step 9 places at the broker.
+§6 step 9 is stated as the authority on what "stop hit" means, and the
+fractional-share case — where no broker order can exist and the stop is
+therefore evaluated at the next scheduled run — is called out explicitly in
+both documents. Pinned by `test_f19_p1_stop_is_intraday_not_close_based`.
+
+## 3. The 20-EMA exit — DELIBERATELY NOT CHANGED
+
+This was the tempting one, and the data says leave it alone. Tuned on
+2011-2019 only, then validated on 2020-2026 without further adjustment:
+
+| `ema_exit` | in-sample avg R | out-of-sample avg R |
+|---|---|---|
+| off | **−0.103 (best)** | +0.077 (**worst**) |
+| 2 (current) | −0.173 | **+0.161 (best)** |
+| 3 | −0.309 | +0.129 |
+| 4 | −0.230 | +0.117 |
+| 5 | −0.195 | +0.114 |
+
+**The in-sample ranking inverts out-of-sample.** Disabling the exit looks best
+on 2011-2019 and is worst on 2020-2026. Changing the rule on the strength of
+the in-sample result would have been curve-fitting a 49-trade sample and would
+have made the recent period worse. No configuration reaches |t| > 2.3 in either
+window, so none of them is distinguishable from noise. The rule stays as-is.
+
+The observation that prompted this — that 20-EMA exits average −0.36R while
+stop exits average +0.27R — turns out to be selection, not causation: "stop"
+includes every trade that reached +1R or +2R and trailed out a winner, so that
+bucket is positive by construction.
+
+## What is still open
+
+**The edge question. Fixing executability did not create an edge.** With both
+fixes in force the strategy is unchanged in expectancy: 87 trades, −0.031R per
+trade, t = −0.27. P1 can now *run*; there is still no evidence it *works*, and
+the sample cannot rule out a small edge in either direction. The split above
+also shows a negative first half and a positive second half, neither
+significant — consistent with regime dependence, or with noise.
+
+That decision — whether to keep P1, and whether to add capital against it —
+remains the operator's and is not made better by more tinkering with the same
+1,000 name-years.

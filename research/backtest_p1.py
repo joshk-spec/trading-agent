@@ -26,10 +26,10 @@ WHAT IS FAITHFUL TO THE PLAYBOOK
   two consecutive closes below the 20-EMA, and the 20-session time stop).
 
 WHAT IS APPROXIMATED, AND WHY (these are the honest caveats)
-  * "Structural target" is qualitative in the playbook. Here it is the highest
-    high of the trailing 60 sessions — a real prior resistance level. When that
-    level is at or below the entry there is no structural target, and the trade
-    is skipped rather than inventing one by multiplying the stop.
+  * The target is the measured move — the pullback's depth projected above the
+    swing high — which is what P1 now specifies. `--target-mode prior_high`
+    reproduces the older reading under which P1 produced ZERO signals in 15
+    years; see research/FINDINGS.md for why that reading is unsatisfiable.
   * Earnings exclusion is NOT modelled — historical earnings dates are not in
     the bar data. Live, P1 refuses names with earnings in the holding horizon,
     which removes some of the largest gap losses. This backtest therefore
@@ -254,7 +254,7 @@ def _regime_ok(spy: Series, spy_ind: Indicators, j: int) -> bool:
 
 def find_signals(s: Series, ind: Indicators, spy: Series, spy_ind: Indicators,
                  spy_idx_by_date: dict[str, int],
-                 target_mode: str = "prior_high") -> list[Signal]:
+                 target_mode: str = "measured_move") -> list[Signal]:
     sigs: list[Signal] = []
     start = max(SMA_SLOW, HIGH_52W_LOOKBACK, TARGET_LOOKBACK) + 2
 
@@ -357,7 +357,8 @@ def find_signals(s: Series, ind: Indicators, spy: Series, spy_ind: Indicators,
 
 
 # ────────────────────────────── execution ──────────────────────────────
-def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str) -> Trade | None:
+def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str,
+             ema_exit: int = EMA_EXIT_CONSECUTIVE) -> Trade | None:
     """Enter at sig.idx+1 and manage forward. Returns None if the limit never filled
     or the trade was voided by the gap rule."""
     e = sig.idx + 1
@@ -450,7 +451,7 @@ def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str) -> Trade 
             e20 = ind.ema20[d]
             if e20 is not None and s.c[d] < e20:
                 below_ema += 1
-                if below_ema >= EMA_EXIT_CONSECUTIVE:
+                if ema_exit and below_ema >= ema_exit:
                     pending_exit = "ema20"
             else:
                 below_ema = 0
@@ -469,7 +470,9 @@ def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str) -> Trade 
 
 
 # ──────────────────────────────── report ────────────────────────────────
-def run(stop_model: str, target_mode: str = "prior_high") -> dict:
+def run(stop_model: str, target_mode: str = "measured_move",
+        start: str = "", end: str = "",
+        ema_exit: int = EMA_EXIT_CONSECUTIVE) -> dict:
     spy = load_bars(os.path.join(DATA_DIR, f"{BENCHMARK}.csv"))
     spy_ind = Indicators(spy)
     spy_idx = {d: i for i, d in enumerate(spy.date)}
@@ -498,7 +501,13 @@ def run(stop_model: str, target_mode: str = "prior_high") -> dict:
         for sig in sigs:
             if sig.idx <= busy_until:
                 continue
-            tr = simulate(s, ind, sig, stop_model)
+            # Window filter on the SIGNAL date keeps train/test splits honest:
+            # a trade is attributed to the period its decision was made in.
+            if start and sig.date < start:
+                continue
+            if end and sig.date > end:
+                continue
+            tr = simulate(s, ind, sig, stop_model, ema_exit)
             if tr is None:
                 continue
             trades.append(tr)
@@ -507,6 +516,8 @@ def run(stop_model: str, target_mode: str = "prior_high") -> dict:
     return {
         "stop_model": stop_model,
         "target_mode": target_mode,
+        "ema_exit": ema_exit,
+        "window": f"{start or 'begin'}..{end or 'end'}",
         "symbols": symbols,
         "first_date": first_date, "last_date": last_date,
         "signals": n_signals,
@@ -519,7 +530,8 @@ def summarize(res: dict) -> str:
     n = len(trades)
     out = []
     a = out.append
-    a(f"P1 BACKTEST — stop model: {res['stop_model']}   target: {res['target_mode']}")
+    a(f"P1 BACKTEST — stop: {res['stop_model']}   target: {res['target_mode']}"
+      f"   ema_exit: {res['ema_exit'] or 'off'}   window: {res['window']}")
     a(f"  universe: {res['symbols']} symbols   period: {res['first_date']} .. {res['last_date']}")
     a(f"  signals generated: {res['signals']}")
     a(f"  trades taken:      {n}   (gap-voids and unfilled limits removed)")
@@ -582,8 +594,12 @@ def main() -> int:
                    help="intraday = broker stop-limit (CLAUDE.md §6 step 9); "
                         "close = P1's exit table as literally written")
     p.add_argument("--target-mode", choices=["prior_high", "measured_move"],
-                   default="prior_high",
+                   default="measured_move",
                    help="how to read P1's 'structural target'")
+    p.add_argument("--start", default="", help="only signals on/after this date (YYYY-MM-DD)")
+    p.add_argument("--end", default="", help="only signals on/before this date (YYYY-MM-DD)")
+    p.add_argument("--ema-exit", type=int, default=EMA_EXIT_CONSECUTIVE,
+                   help="consecutive closes below the 20-EMA that force an exit; 0 disables")
     p.add_argument("--csv", default="", help="write per-trade rows to this path")
     args = p.parse_args()
 
@@ -594,7 +610,7 @@ def main() -> int:
     models = ["intraday", "close"] if args.stop_model == "both" else [args.stop_model]
     last = None
     for m in models:
-        last = run(m, args.target_mode)
+        last = run(m, args.target_mode, args.start, args.end, args.ema_exit)
         print(summarize(last))
         print()
 

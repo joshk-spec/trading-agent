@@ -185,6 +185,27 @@ class TestRegressionGuards(unittest.TestCase):
     def test_f18_p2_sizing_lists_the_notional_cap(self):
         self.assertIn("MAX_POS_NOTIONAL", P2)
 
+    def test_f19_p1_stop_is_intraday_not_close_based(self):
+        """A 15-year backtest showed the close-based reading and the resting
+        stop-limit in §6 step 9 are different exits with materially different
+        win rates. Only one may be in force, and it is the broker order's."""
+        self.assertNotIn("Stop hit (close below `stop_price`)", P1)
+        self.assertIn("Stop touched intraday", P1)
+        self.assertIn("INTRADAY touch, not a close", P1)
+
+    def test_f20_p1_names_exactly_one_target_rule(self):
+        """The old menu — 'prior high, measured move, or a resistance level' —
+        left P1 UNEXECUTABLE: read as a prior high, 0 of 341 otherwise-valid
+        candidates in 15 years cleared the 2.0 reward:risk minimum."""
+        self.assertNotIn("prior high, measured move, or a resistance level", P1)
+        self.assertIn("swing_high + (swing_high - pullback_low)", P1)
+
+    def test_f21_the_unexecutable_target_reading_stays_documented(self):
+        """Keep the reason pinned. Without it someone 'simplifies' the target
+        rule back to a prior high and silently disables the playbook again."""
+        self.assertIn("unexecutable", P1)
+        self.assertIn("research/FINDINGS.md", P1)
+
 
 class TestStructuralIntegrity(unittest.TestCase):
     def test_every_referenced_playbook_file_exists(self):

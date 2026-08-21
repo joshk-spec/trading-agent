@@ -7,7 +7,7 @@ marked **[HARD]** is a precondition, not a guideline.
 
 ## Phase 1 — Pre-flight (§3)
 
-0. **Run the test suite first:** `py engine/run_all_tests.py` (108 tests). Any
+0. **Run the test suite first:** `py engine/run_all_tests.py` (111 tests). Any
    failure ⇒ do not trade, report the failure. The risk math must be verified
    before money moves.
 1. Check both halt files. `state/HALT` present ⇒ reconcile, report, **exit**
@@ -75,7 +75,9 @@ expected, particularly at T0.
 
 Full sequence per order: live quote → `risk_engine.check_option_liquidity()` →
 limit price → **size via the engine** (`size-equity` / `size-option` / `size-csp`;
-pass `--target` on P1 so the engine enforces the 2.0 minimum reward:risk)
+on P1 pass `--target` = the measured move, `swing_high + (swing_high -
+pullback_low)`, so the engine enforces the 2.0 minimum reward:risk — that
+formula is the rule, not one option among several, see the P1 playbook)
 → re-verify all [HARD] rules per §6 step 5, including `MAX_SYMBOL_EXP` summed
 across equity and options in that underlying → `review_*_order` → place → confirm
 fill → **for equity entries, place the resting protective stop-limit order (§6

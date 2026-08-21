@@ -64,7 +64,7 @@ If it halts on its own, read the reason before clearing.
 py engine/run_all_tests.py
 ```
 
-108 tests, no dependencies beyond stdlib Python.
+111 tests, no dependencies beyond stdlib Python.
 
 (Use `py` on Windows. On macOS or Linux the command is `python3`.) They pin every constitutional
 number — tier boundaries, the 5%/25%/30%/40% caps, the Minimum Viable Unit rule,
@@ -140,7 +140,7 @@ CLAUDE.md                 constitution — always loaded, binding
 engine/
   risk_engine.py          ALL money math. Single source of truth. Tested.
   test_risk_engine.py     70 unit tests: sizing, tiers, PDT, drawdown, gates
-  test_doc_consistency.py 38 tests asserting docs and engine agree
+  test_doc_consistency.py 41 tests asserting docs and engine agree
   run_all_tests.py        runs both — the agent runs this before its first order
 playbooks/                strategy specs — read during a run
   P1_equity_momentum.md   T0+  fractional shares, the only T0-viable strategy

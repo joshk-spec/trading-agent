@@ -49,7 +49,7 @@ STAGES = [
     "close > prior high",
     "volume >= 20d avg",
     "stop <= 12% of entry",
-    "structural target above entry",
+    "measured-move target above entry",
     "reward:risk >= 2.0",
 ]
 
@@ -146,7 +146,8 @@ def run() -> list[int]:
             if stop_pct > MAX_STOP_PCT: continue
             counts[k] += 1; k += 1
 
-            target = max(s.h[i - TARGET_LOOKBACK + 1:i + 1])
+            # Measured move, matching the target rule P1 now specifies.
+            target = swing_high + (swing_high - pull_low)
             if target <= s.c[i]: continue
             counts[k] += 1; k += 1
 

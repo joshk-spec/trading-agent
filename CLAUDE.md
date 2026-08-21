@@ -470,6 +470,15 @@ Sequence for every order:
    document — is the account's actual protection against a crash between
    sessions: every rule elsewhere here only evaluates when a session is
    running, and sessions are not continuous.
+   - **This order defines what "stop hit" means.** A resting stop-limit
+     triggers on an **intraday touch** of `stop_price`, not on a close below
+     it. The playbook exit tables say the same thing; if you ever find one that
+     says "close below", that document is stale and this is the authority. The
+     two readings are genuinely different trades — a wick through the stop that
+     closes back above it is a full loss under one and a non-event under the
+     other — so they must never both be in force. Measured over 15 years the
+     two produce materially different win rates on identical signals
+     (`research/FINDINGS.md`).
    - **Fractional-share exception.** Robinhood does not accept stop orders on
      fractional quantities — only `type=market` fills fractional shares, and
      stop orders are whole-share, regular-hours-only instruments. If the
@@ -477,7 +486,10 @@ Sequence for every order:
      can be placed. Do not round the quantity to make one possible — that
      silently changes the position size the engine computed. Record
      `Broker stop: none — fractional quantity` in the journal so the gap is
-     visible rather than assumed away.
+     visible rather than assumed away. With no resting order there is nothing
+     to enforce the stop intraday, so for these positions — and only these —
+     the stop is evaluated at the next scheduled run against that session's
+     price, and may fill well below `stop_price`.
    - This order is **exempt** from the "cancel resting orders" rule below —
      leaving it resting is the explicit point of placing it. Options positions
      are not currently covered by this step; see §5 for what to do instead.
