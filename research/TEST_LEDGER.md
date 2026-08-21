@@ -35,3 +35,53 @@ study deliberately spent none, because its pre-declared advancement gate
 no evidence of edge in P1 in any configuration, and no configuration approaches
 the corrected significance threshold. Further variants tested against this same
 1,000 name-years should be assumed to be finding noise.
+
+---
+
+## 2026-08-21 — instrument corrected, universe widened
+
+Two changes to the measuring apparatus, not to any strategy.
+
+**Costs.** `backtest_p1.py` charged nothing for spread or slippage, so every
+number above was optimistic. `--cost-bps` now defaults to **10 = 0.10% round
+trip**, charged once per position (not per partial exit), with a test asserting
+higher costs can never improve a result. On the original 69-name universe this
+moved P1 from −0.031R to **−0.079R**: costs alone were larger than the entire
+previously-reported loss.
+
+**Universe: 69 → 534 names.** Breadth is the only legitimate frequency lever —
+identical selectivity across ~7× the names, with no gate touched. Signals went
+5.8/yr → **32.7/yr**; the sample went 87 → **491 trades**.
+
+**Delisted names are unavailable and the bias is therefore permanent.** Tested,
+not assumed: the data source returns *zero* bars for TWTR, FRC, SIVB, ATVI,
+CERN and XLNX. Every result here excludes companies that failed, which flatters
+a long-only strategy. A negative result on this universe is stronger than it
+looks.
+
+### P1 final measurement (534 names, 15y, 10bps)
+
+| | value |
+|---|---|
+| trades | **491** |
+| win rate | 25.3% |
+| avg win / avg loss | +1.430R / −0.593R |
+| **average R** | **−0.082R** |
+| t | **−1.74** |
+| **95% CI on true edge** | **[−0.174R, +0.010R]** |
+| max drawdown | −49.9R |
+
+**This is decisive, and it is why breadth mattered.** At 87 trades the interval
+was [−0.254R, +0.192R] — wide enough to contain the +0.10R promotion bar, so
+"unproven" was the honest verdict. At 491 trades the upper bound is **+0.010R**,
+and the bar sits **1.9 standard errors above** the best case the data permits.
+P1 is no longer unproven. It is excluded.
+
+**P1 is closed. No further variants of it will be tested** — 20 tests against
+this dataset is already past the point where a positive result would mean
+anything, and the mechanism has now been measured three independent ways
+(unexecutable as written; no edge when fixed; no gate relaxation recovers it).
+
+**Holdout budget: still 1 / 3.** The two changes above are instrument
+corrections applied to the full period, not hypothesis tests, and spent no
+holdout.

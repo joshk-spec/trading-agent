@@ -64,7 +64,7 @@ If it halts on its own, read the reason before clearing.
 py engine/run_all_tests.py
 ```
 
-111 tests, no dependencies beyond stdlib Python.
+109 tests, no dependencies beyond stdlib Python.
 
 (Use `py` on Windows. On macOS or Linux the command is `python3`.) They pin every constitutional
 number — tier boundaries, the 5%/25%/30%/40% caps, the Minimum Viable Unit rule,
@@ -80,12 +80,26 @@ engine wins** and the agent must halt and report it.
 
 ## What is active right now
 
-Account value is **$50**, funded and live as of 2026-08-20. Current tier:
-**T0**. Trading runs unattended via the cloud routine
-`trading-agent-daily-session`, weekdays 9:35–15:35 ET, hourly. The local
-Windows task and `run_trade.ps1` are **deliberately disabled** — two schedulers
-on one account race on `state/*.json`; never re-enable one without disabling
-the other.
+**MODE: SEARCH — no live entries.** Account value is **$50**, funded, flat.
+
+P1, the only playbook, has been measured over 534 names and 15 years after
+10bps round-trip costs: **491 trades, −0.082R per trade, t = −1.74, 95% CI
+[−0.174R, +0.010R]**. The bar for deploying capital is +0.10R after costs,
+which lies above the upper bound of that interval — so this is not "unproven",
+it is excluded. Kelly on the measured distribution is negative, meaning every
+positive bet size has negative expected log growth. The account therefore
+holds cash and loses nothing while the search runs.
+
+Mode flips to DEPLOY only when a pre-registered hypothesis clears the bar in
+`research/TEST_LEDGER.md`: train avg R ≥ +0.10 after costs, t ≥ 2.0, ≥100
+trades, then one holdout run that confirms. Nothing else promotes.
+
+The cloud routine `trading-agent-daily-session` runs **once daily** while flat
+(it reconciles, journals, and confirms nothing has drifted). The local Windows
+task and `run_trade.ps1` are **deleted** — they drove a second agent against
+the same account and the same day-trade counter. To remove the scheduled task
+itself, run elevated:
+`Unregister-ScheduledTask -TaskName "TradingAgent Daily Trade" -Confirm:$false`
 
 | Tier | Account value | Unlocks |
 |---|---|---|
@@ -140,13 +154,19 @@ CLAUDE.md                 constitution — always loaded, binding
 engine/
   risk_engine.py          ALL money math. Single source of truth. Tested.
   test_risk_engine.py     70 unit tests: sizing, tiers, PDT, drawdown, gates
-  test_doc_consistency.py 41 tests asserting docs and engine agree
+  test_doc_consistency.py 39 tests asserting docs and engine agree
   run_all_tests.py        runs both — the agent runs this before its first order
 playbooks/                strategy specs — read during a run
-  P1_equity_momentum.md   T0+  fractional shares, the only T0-viable strategy
-  P2_swing_options.md     T1+  long calls (bullish) / long puts (bearish), 30-60 DTE
-  P3_wheel.md             T3+  cash-secured puts → covered calls
-  P4_0dte.md              T4   intraday, locked under $25k
+  P1_equity_momentum.md   T0+  the only live playbook; measured, no edge
+                               (P2/P3/P4 retired to the retired-playbooks branch)
+research/                 the search: backtests, ledger, findings
+  fetch_bars.py           534-name universe, 15y daily bars
+  backtest_p1.py          lookahead-free harness, costs in bps
+  test_backtest.py        29 tests incl. the lookahead guard
+  funnel.py               which gate eliminates what
+  gate_study.py           pre-registered single-gate attribution
+  TEST_LEDGER.md          every run, including failures — multiple-comparisons
+  FINDINGS.md             what has actually been measured
 .claude/commands/
   trade.md                /trade  — one session
   review.md               /review — weekly, read-only

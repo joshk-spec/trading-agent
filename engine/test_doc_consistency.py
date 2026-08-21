@@ -29,12 +29,16 @@ def read(rel):
 CLAUDE = read("CLAUDE.md")
 README = read("README.md")
 P1 = read("playbooks/P1_equity_momentum.md")
-P2 = read("playbooks/P2_swing_options.md")
-P3 = read("playbooks/P3_wheel.md")
-P4 = read("playbooks/P4_0dte.md")
 TRADE = read(".claude/commands/trade.md")
-ALL_DOCS = {"CLAUDE.md": CLAUDE, "README.md": README, "P1": P1,
-            "P2": P2, "P3": P3, "P4": P4, "trade.md": TRADE}
+ALL_DOCS = {"CLAUDE.md": CLAUDE, "README.md": README, "P1": P1, "trade.md": TRADE}
+
+# P2/P3/P4 were retired to the `retired-playbooks` branch on 2026-08-21. The
+# guards that used to pin their internal consistency went with them — they
+# cannot fail on documents that do not exist, and keeping them would have meant
+# keeping the files purely to satisfy their own tests. What replaces them is
+# TestRetiredPlaybooksStayRetired below, which pins the property that actually
+# matters now: that they are gone and not referenced as live.
+RETIRED_PLAYBOOKS = ["P2_swing_options.md", "P3_wheel.md", "P4_0dte.md"]
 
 
 class TestConstantsMatchDocuments(unittest.TestCase):
@@ -70,7 +74,10 @@ class TestConstantsMatchDocuments(unittest.TestCase):
         self.assertRegex(CLAUDE, rf">=\s*{E.ASK_SIZE_MULTIPLE}\s*\*\s*intended_contracts")
 
     def test_pdt_numbers_match(self):
-        self.assertIn(f"{E.PDT_LIMIT} per rolling {E.PDT_WINDOW_DAYS} business days", CLAUDE + P4)
+        # \s+ because the phrase wraps a line in §2.4 — this used to be matched
+        # against P4, which has been retired.
+        self.assertRegex(CLAUDE, rf"{E.PDT_LIMIT} day trades per rolling\s+"
+                                 rf"{E.PDT_WINDOW_DAYS} business days")
         self.assertIn("$25,000", CLAUDE)
         self.assertEqual(E.PDT_EXEMPT_ABOVE, 25_000.0)
 
@@ -116,16 +123,12 @@ class TestRegressionGuards(unittest.TestCase):
     """Each of these strings represents a contradiction fixed in the 2026-08-19
     audit. If one reappears, the corresponding bug is back."""
 
-    def test_f1_no_separate_csp_aggregate_ceiling(self):
-        self.assertNotIn("total across all open CSPs <= 0.50", P3)
-        self.assertNotRegex(P3, r"CSPs?\s*<=\s*0\.50\s*\*\s*ACCOUNT")
-
     def test_f2_symbol_exposure_aggregation_is_documented(self):
         self.assertIn("symbol_exposure", CLAUDE)
         self.assertIn("shares and options together", CLAUDE)
 
     def test_f3_engine_is_referenced_everywhere_sizing_happens(self):
-        for name in ("CLAUDE.md", "P1", "P2", "P3", "trade.md"):
+        for name in ("CLAUDE.md", "P1", "trade.md"):
             with self.subTest(doc=name):
                 self.assertIn("risk_engine.py", ALL_DOCS[name])
 
@@ -142,28 +145,11 @@ class TestRegressionGuards(unittest.TestCase):
         self.assertIn("3.0%", CLAUDE + P1)
         self.assertRegex(P1, r"unreachable|cannot reach it")
 
-    def test_f7_single_delta_range_in_p2(self):
-        self.assertNotIn("Delta < 0.40 is\n   prohibited", P2)
-        self.assertIn("0.55–0.70", P2)
-
-    def test_f8_bearish_setup_exists_for_puts(self):
-        self.assertIn("Bearish leg — long puts", P2)
-        self.assertIn("52-week **low**", P2)
-
-    def test_f9_sizing_vs_stop_asymmetry_is_explained(self):
-        self.assertIn("100% loss", P2)
-        self.assertNotIn("mental stop on remainder", P2)
-
     def test_f10_redundant_abs_spread_gate_removed(self):
         self.assertNotRegex(CLAUDE, r"abs_spread\s*<=\s*0\.10\s*#")
 
-    def test_f11_fractional_vs_covered_call_addressed(self):
+    def test_f11_fractional_share_limit_is_stated_in_p1(self):
         self.assertIn("100 whole shares", P1)
-        self.assertIn("100 whole shares", P3)
-
-    def test_f12_p3_holding_period_consistent_with_dte_rules(self):
-        self.assertNotIn("**Holding period:** 21–45 days per cycle", P3)
-        self.assertIn("9–24 days per leg", P3)
 
     def test_f13_max_concurrent_enforced_in_execution_sequence(self):
         self.assertIn("MAX_CONCURRENT", CLAUDE)
@@ -181,9 +167,6 @@ class TestRegressionGuards(unittest.TestCase):
     def test_f17_journal_reports_realized_not_target_risk(self):
         self.assertIn("NOT the 5% target", CLAUDE)
         self.assertNotIn("computed: MAX_RISK_TRADE $X / unit risk $Y", CLAUDE)
-
-    def test_f18_p2_sizing_lists_the_notional_cap(self):
-        self.assertIn("MAX_POS_NOTIONAL", P2)
 
     def test_f19_p1_stop_is_intraday_not_close_based(self):
         """A 15-year backtest showed the close-based reading and the resting
@@ -286,7 +269,7 @@ class TestStructuralIntegrity(unittest.TestCase):
 
     def test_no_section_reference_points_past_the_last_section(self):
         defined = {int(m) for m in re.findall(r"^## §(\d+)\.", CLAUDE, re.M)}
-        cited = {int(m) for m in re.findall(r"§(\d+)", CLAUDE + P1 + P2 + P3 + P4 + TRADE)}
+        cited = {int(m) for m in re.findall(r"§(\d+)", CLAUDE + P1 + TRADE)}
         self.assertTrue(cited <= defined, f"dangling refs: {sorted(cited - defined)}")
 
     def test_single_leg_only_constraint_is_stated(self):
@@ -296,6 +279,37 @@ class TestStructuralIntegrity(unittest.TestCase):
     def test_account_number_consistent_everywhere(self):
         accounts = set(re.findall(r"\b79397360\d\b", CLAUDE + README + TRADE))
         self.assertEqual(accounts, {"793973603"}, f"conflicting account numbers: {accounts}")
+
+
+class TestRetiredPlaybooksStayRetired(unittest.TestCase):
+    """P2/P3/P4 were retired on 2026-08-21: unreachable below $700/$10k/$25k,
+    never backtested, and P3/P4 not backtestable by an equity-bar harness. They
+    carried roughly half the [HARD] rules in the repo while contributing nothing
+    at any balance held. They live on the `retired-playbooks` branch."""
+
+    def test_retired_playbook_files_are_absent(self):
+        for name in RETIRED_PLAYBOOKS:
+            with self.subTest(playbook=name):
+                self.assertFalse(
+                    os.path.exists(os.path.join(ROOT, "playbooks", name)),
+                    f"{name} is back on main; retire it or re-validate it")
+
+    def test_no_live_document_points_at_a_retired_playbook_file(self):
+        """A dangling path is worse than a missing rule: the agent is told to
+        read the playbook during a run and would find nothing."""
+        for doc, text in ALL_DOCS.items():
+            for name in RETIRED_PLAYBOOKS:
+                with self.subTest(doc=doc, playbook=name):
+                    self.assertNotIn(f"playbooks/{name}", text)
+
+    def test_constitution_records_that_a_missing_playbook_means_no(self):
+        self.assertIn("A playbook with no file in", CLAUDE)
+        self.assertIn("retired-playbooks", CLAUDE)
+
+    def test_the_duplicate_local_runner_is_gone(self):
+        """run_trade.ps1 drove a second agent against the same account and the
+        same day-trade counter."""
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "run_trade.ps1")))
 
 
 if __name__ == "__main__":

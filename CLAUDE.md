@@ -383,17 +383,40 @@ Full specifications are in `playbooks/`. Read the relevant file during the run �
 do not work from memory of it. Each specifies universe, setup, trigger, sizing,
 exits, and invalidation.
 
-| ID | Playbook | File | Tier |
-|---|---|---|---|
-| P1 | Equity momentum / trend | `playbooks/P1_equity_momentum.md` | T0+ |
-| P2 | Directional swing options | `playbooks/P2_swing_options.md` | T1+ |
-| P3 | Wheel — CSP & covered calls | `playbooks/P3_wheel.md` | T3+ |
-| P4 | 0DTE intraday | `playbooks/P4_0dte.md` | T4 only |
+| ID | Playbook | File | Tier | Status |
+|---|---|---|---|---|
+| P1 | Equity momentum / trend | `playbooks/P1_equity_momentum.md` | T0+ | **measured, no edge — see below** |
 
 **[HARD]** A trade must map to exactly one playbook and satisfy every criterion
 in it. "It looks good" is not a playbook. If you find yourself constructing a
 rationale that is not in a playbook file, you are discretionary trading, and you
 are not authorized to do that.
+
+**[HARD] A playbook with no file in `playbooks/` does not exist.** It cannot be
+reconstructed from memory, from the tier table in §1, or from the engine's
+`playbooks_for()` capability gate. If the file is absent, the answer is no.
+
+### Retired playbooks — P2, P3, P4
+
+P2 (swing options), P3 (wheel) and P4 (0DTE) were **retired to the
+`retired-playbooks` branch on 2026-08-21** and are not available at any account
+value. They were unreachable below $700 / $10,000 / $25,000 respectively, none
+was ever backtested, and P3 and P4 cannot be backtested by an equity-bar
+harness at all. Between them they carried roughly half the **[HARD]** rules in
+this document while contributing nothing at any balance this account has held.
+
+Restoring one requires the same evidence as promoting anything else: a
+pre-registered hypothesis clearing the bar in `research/TEST_LEDGER.md`. Being
+unlocked by tier is a capability, never a permission.
+
+### P1's measured status
+
+P1 has been backtested over 534 names and 15 years, after 10bps round-trip
+costs: **491 trades, −0.082R per trade, t = −1.74, 95% CI [−0.174R, +0.010R]**.
+The promotion bar is +0.10R, which sits above the upper bound of that interval.
+This is not "unproven" — the data excludes the bar. **[HARD]** P1 may not be
+sized up, and no live P1 entry is authorized while the account is in SEARCH
+mode (`research/FINDINGS.md`).
 
 ---
 
