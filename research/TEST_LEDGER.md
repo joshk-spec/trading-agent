@@ -201,3 +201,34 @@ proves unenforceable at $50 — short-term reversal returns 4.8%/yr against SPY'
 **VERDICT: FAILS.** avg R +0.0102 against a +0.05 bar (5× short). Clustered t
 +2.57 scrapes past 2.5 but does **not** clear the Bonferroni threshold (~3.0)
 for this project's 22 tests. **No holdout spent — budget remains 1/3.**
+
+### Risk-adjusted check — no rescue there either
+
+Compounded daily, capital-weighted:
+
+| | total | CAGR | max drawdown | utilisation |
+|---|---|---|---|---|
+| SPY buy-and-hold | **+194.3%** | +11.40%/yr | −34.1% | 100% |
+| MR, 15 slots | +76.0% | +5.82%/yr | −29.5% | 63% |
+| MR, 30 slots | +60.9% | +4.87%/yr | −21.7% | 51% |
+
+Return per unit of drawdown: SPY **0.33**, MR-15 **0.20**, MR-30 **0.22**. The
+index dominates on both axes — more return AND more return per unit of pain.
+There is no risk-adjusted framing that rescues this specification, and adding
+slots lowers drawdown only by lowering return roughly in proportion.
+
+**H002 is closed.** Dominated by buy-and-hold. No holdout spent; budget 1/3.
+
+### Structural note for whatever is tested next
+
+Both mechanisms measured so far (P1 trend-pullback, H002 reversal) are
+**long-only, partially invested, and in the same asset class as the benchmark**.
+MR sits in cash 37-49% of the time, so it must generate large alpha on the
+invested half merely to match an index that is invested 100% of the time. That
+is a structural handicap, not a property of either mechanism.
+
+The one untested family that does not carry it is **cross-sectional momentum
+(CAMPAIGN H1)**: rank the universe, hold the top decile, rebalance monthly —
+fully invested at all times, no cash drag, and the most replicated anomaly in
+equities. If anything here is going to beat the index, that is where to look.
+
