@@ -1,5 +1,5 @@
 {
-  "last_reconciled": "2026-08-21T15:37:00Z",
+  "last_reconciled": "2026-08-21T19:35:00Z",
   "positions": [],
   "_schema": "Each entry: {symbol, kind, quantity, notional}. kind is one of equity|long_option|short_put|short_call. notional is dollar exposure per CLAUDE.md §2.1: shares*price (equity/covered-call shares), premium*100*qty (long_option), strike*100*qty (short_put collateral).",
   "_note": "Written by the agent each session from live broker data (§3). The broker is authoritative for what's actually open; this file exists both to detect drift (§7 incident if it disagrees) AND is read directly by risk_engine.py's CLI (size-equity/size-option/size-csp, via --positions-file, default state/positions.json) to enforce MAX_SYMBOL_EXP and MAX_CONCURRENT. A stale or malformed entry here doesn't just miss an incident -- it lets those caps silently pass when they shouldn't. Keep it current every session, not just diffed."
