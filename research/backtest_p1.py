@@ -203,6 +203,30 @@ def roc(xs: list[float], n: int) -> list[float | None]:
 
 
 # ────────────────────────── signal detection ──────────────────────────
+@dataclass(frozen=True)
+class Config:
+    """Tunable P1 gates. Defaults ARE the playbook; every field is exactly the
+    value playbooks/P1_equity_momentum.md specifies. gate_study.py varies one
+    field at a time to ask which gates carry the edge and which only restrict
+    frequency. Nothing here changes live behaviour — the live agent reads the
+    playbook, not this file."""
+    max_pct_below_high: float = MAX_PCT_BELOW_HIGH
+    retrace_min: float = RETRACE_MIN
+    retrace_max: float = RETRACE_MAX
+    rsi_lo: float = RSI_BAND_LO
+    rsi_hi: float = RSI_BAND_HI
+    ema_proximity: float = EMA_PROXIMITY
+    min_rr: float = MIN_RR
+    require_regime: bool = True
+    require_sma_slope: bool = True
+    require_declining_vol: bool = True
+    require_rel_strength: bool = True
+    require_trigger_volume: bool = True
+
+
+DEFAULT_CONFIG = Config()
+
+
 @dataclass
 class Signal:
     symbol: str
@@ -254,7 +278,8 @@ def _regime_ok(spy: Series, spy_ind: Indicators, j: int) -> bool:
 
 def find_signals(s: Series, ind: Indicators, spy: Series, spy_ind: Indicators,
                  spy_idx_by_date: dict[str, int],
-                 target_mode: str = "measured_move") -> list[Signal]:
+                 target_mode: str = "measured_move",
+                 cfg: Config = DEFAULT_CONFIG) -> list[Signal]:
     sigs: list[Signal] = []
     start = max(SMA_SLOW, HIGH_52W_LOOKBACK, TARGET_LOOKBACK) + 2
 
@@ -267,7 +292,9 @@ def find_signals(s: Series, ind: Indicators, spy: Series, spy_ind: Indicators,
 
         # ---- market regime (uses SPY at the SAME date) ----
         j = spy_idx_by_date.get(s.date[i])
-        if j is None or not _regime_ok(spy, spy_ind, j):
+        if j is None:
+            continue
+        if cfg.require_regime and not _regime_ok(spy, spy_ind, j):
             continue
 
         # ---- trend structure ----
@@ -277,10 +304,10 @@ def find_signals(s: Series, ind: Indicators, spy: Series, spy_ind: Indicators,
         if not (s.c[i] > f > sl):
             continue
         prev_f = ind.sma_fast[i - SMA_SLOPE_LOOKBACK]
-        if prev_f is None or f <= prev_f:          # 50-SMA must be rising
+        if cfg.require_sma_slope and (prev_f is None or f <= prev_f):
             continue
         high_252 = max(s.h[i - HIGH_52W_LOOKBACK + 1:i + 1])
-        if high_252 <= 0 or (high_252 - s.c[i]) / high_252 > MAX_PCT_BELOW_HIGH:
+        if high_252 <= 0 or (high_252 - s.c[i]) / high_252 > cfg.max_pct_below_high:
             continue
 
         # ---- pullback ----
@@ -291,17 +318,17 @@ def find_signals(s: Series, ind: Indicators, spy: Series, spy_ind: Indicators,
             continue
         pull_low = min(s.l[sh_idx:i + 1])
         retrace = (swing_high - pull_low) / swing_high
-        if not (RETRACE_MIN <= retrace <= RETRACE_MAX):
+        if not (cfg.retrace_min <= retrace <= cfg.retrace_max):
             continue
         e20 = ind.ema20[i]
-        if e20 is None or pull_low > e20 * (1 + EMA_PROXIMITY):
+        if e20 is None or pull_low > e20 * (1 + cfg.ema_proximity):
             continue                                # never came back to the 20-EMA
         # pullback on declining volume vs the impulse leg before the swing high
         if sh_idx - VOL_AVG_LOOKBACK // 2 < 0:
             continue
         pull_vol = statistics.fmean(s.v[sh_idx:i + 1])
         impulse_vol = statistics.fmean(s.v[sh_idx - 10:sh_idx])
-        if impulse_vol <= 0 or pull_vol >= impulse_vol:
+        if cfg.require_declining_vol and (impulse_vol <= 0 or pull_vol >= impulse_vol):
             continue
 
         # ---- RSI fell into 40-55 and turned up ----
@@ -309,7 +336,7 @@ def find_signals(s: Series, ind: Indicators, spy: Series, spy_ind: Indicators,
         if len(window) < RSI_WINDOW:
             continue
         trough = min(window)
-        if not (RSI_BAND_LO <= trough <= RSI_BAND_HI):
+        if not (cfg.rsi_lo <= trough <= cfg.rsi_hi):
             continue
         if trough < RSI_FLOOR:
             continue
@@ -318,13 +345,13 @@ def find_signals(s: Series, ind: Indicators, spy: Series, spy_ind: Indicators,
 
         # ---- relative strength vs SPY over 20 sessions ----
         r_sym, r_spy = ind.roc20[i], spy_ind.roc20[j]
-        if r_sym is None or r_spy is None or r_sym <= r_spy:
+        if cfg.require_rel_strength and (r_sym is None or r_spy is None or r_sym <= r_spy):
             continue
 
         # ---- entry trigger ----
         if s.c[i] <= s.h[i - 1]:
             continue
-        if ind.vol_avg[i] is None or s.v[i] < ind.vol_avg[i]:
+        if cfg.require_trigger_volume and (ind.vol_avg[i] is None or s.v[i] < ind.vol_avg[i]):
             continue
 
         # ---- stop from structure, then the 12% rejection ----
@@ -349,7 +376,7 @@ def find_signals(s: Series, ind: Indicators, spy: Series, spy_ind: Indicators,
             target = swing_high + (swing_high - pull_low)
         if target <= s.c[i]:
             continue                                # no structural target above entry
-        if (target - s.c[i]) / (s.c[i] - stop) < MIN_RR:
+        if (target - s.c[i]) / (s.c[i] - stop) < cfg.min_rr:
             continue
 
         sigs.append(Signal(s.symbol, i, s.date[i], s.c[i], stop, target))
@@ -472,7 +499,8 @@ def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str,
 # ──────────────────────────────── report ────────────────────────────────
 def run(stop_model: str, target_mode: str = "measured_move",
         start: str = "", end: str = "",
-        ema_exit: int = EMA_EXIT_CONSECUTIVE) -> dict:
+        ema_exit: int = EMA_EXIT_CONSECUTIVE,
+        cfg: Config = DEFAULT_CONFIG) -> dict:
     spy = load_bars(os.path.join(DATA_DIR, f"{BENCHMARK}.csv"))
     spy_ind = Indicators(spy)
     spy_idx = {d: i for i, d in enumerate(spy.date)}
@@ -491,7 +519,7 @@ def run(stop_model: str, target_mode: str = "measured_move",
         first_date = min(first_date or s.date[0], s.date[0])
         last_date = max(last_date or s.date[-1], s.date[-1])
         ind = Indicators(s)
-        sigs = find_signals(s, ind, spy, spy_ind, spy_idx, target_mode)
+        sigs = find_signals(s, ind, spy, spy_ind, spy_idx, target_mode, cfg)
         n_signals += len(sigs)
 
         # One position per symbol at a time: a new signal while the previous

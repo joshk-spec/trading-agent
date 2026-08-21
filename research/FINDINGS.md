@@ -193,3 +193,83 @@ significant — consistent with regime dependence, or with noise.
 That decision — whether to keep P1, and whether to add capital against it —
 remains the operator's and is not made better by more tinkering with the same
 1,000 name-years.
+
+---
+
+# Gate attribution study (2026-08-21)
+
+**Question:** P1 admits 0.14% of bar-days, which is why it can never validate
+itself. Is some gate costing frequency without contributing edge? Relaxing such
+a gate would buy statistical power for free.
+
+**Protocol, declared before results** (`research/gate_study.py`): 15 variants,
+each relaxing exactly one gate, no combinations, no search. All tuning on
+2011-2019. Advancement to out-of-sample required **≥3× the baseline trade count
+AND train average R ≥ 0** — a variant that improves R without adding trades
+does not solve the problem. With 15 hypotheses the Bonferroni threshold is
+|t| > 2.94.
+
+**Result: no variant met the criteria. Nothing was advanced, nothing validated,
+nothing recommended.**
+
+| variant | trades | avg R | t |
+|---|---|---|---|
+| baseline (playbook) | 50 | −0.173 | −1.36 |
+| within 15% of high | 54 | −0.228 | −1.87 |
+| within 25% of high | 54 | −0.228 | −1.87 |
+| retracement 2–15% | 55 | −0.168 | −1.39 |
+| retracement gate off | 55 | −0.168 | −1.39 |
+| RSI band 35–65 | 63 | +0.000 | +0.00 |
+| RSI band gate off | 63 | +0.000 | +0.00 |
+| 20-EMA proximity 5% | 50 | −0.173 | −1.36 |
+| 20-EMA proximity off | 50 | −0.173 | −1.36 |
+| declining-volume off | 131 | −0.148 | −1.64 |
+| relative-strength off | 156 | −0.025 | −0.31 |
+| trigger-volume off | 218 | −0.053 | −0.73 |
+| 50-SMA slope off | 57 | −0.087 | −0.68 |
+| min reward:risk 1.5 | 63 | +0.074 | +0.53 |
+| min reward:risk 1.0 | 68 | +0.060 | +0.46 |
+| SPY regime off | 77 | −0.031 | −0.27 |
+
+## What this shows
+
+**1. There is no free frequency.** The gates that actually restrict volume are
+trigger-volume (removing it: 50 → 218 trades), relative-strength (50 → 156) and
+declining-volume (50 → 131). All three go **negative** when relaxed. The
+variants that turn non-negative (RSI band off, reward:risk 1.5/1.0) barely move
+the trade count. Frequency and (apparent) edge trade against each other in
+every direction tested.
+
+**2. Nothing is statistically real in either direction.** The largest |t| in
+the table is 1.87, against a Bonferroni threshold of 2.94 and a nominal
+threshold of 1.96. This is not "the relaxations are worse" — it is "15 more
+tests produced no evidence about anything."
+
+**3. Three gates are inert and could be deleted without changing a single
+trade.** `20-EMA proximity` at 2%, 5%, or disabled gives *identical* results
+(50 trades, −0.173R) — the pullback low essentially always reaches the 20-EMA
+once the other conditions hold. Likewise `within 15%` and `within 25% of high`
+are identical to each other, and `retracement 2–15%` is identical to disabling
+the retracement gate. These are documentation weight, not risk control. Worth
+simplifying eventually; not worth doing now.
+
+## Conclusion
+
+P1 cannot be repaired into something evaluable by loosening a gate. Combined
+with the earlier findings, the picture is complete:
+
+* as originally written it could not trade at all (0 signals in 15 years);
+* with the target rule fixed it trades 5.8×/year and shows −0.031R, t = −0.27;
+* at that frequency confirming a realistic +0.10R edge would take ~152 years;
+* and no single-gate relaxation buys frequency without giving back the edge.
+
+**Recommendation: do not scale capital into P1.** Running it at $50 (~$0.78 of
+risk per trade, ~6 trades/year) remains worthwhile purely as a live-fire test
+of the machinery — every serious defect found so far surfaced from running the
+system, not from reading it. That is a fair price for the exercise. It is not
+an investment thesis.
+
+The durable asset built here is the infrastructure — tested risk engine,
+fail-closed halts, broker reconciliation, append-only journal, and a
+lookahead-free backtest harness — not this particular strategy. Any future
+strategy plugs into it. P1 is replaceable; that is not.
