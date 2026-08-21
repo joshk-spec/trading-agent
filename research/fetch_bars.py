@@ -28,26 +28,93 @@ DATA_DIR = os.path.join(HERE, "data")
 # Benchmark first — the regime filter and relative-strength test both need it.
 BENCHMARK = "SPY"
 
-# A liquid, optionable, multi-sector universe. This is a SURVIVORSHIP-BIASED
-# sample: every name is one that still trades today. Companies that were liquid
-# in 2014 and later blew up or were acquired are absent, which flatters any
-# long-only trend strategy. The report states this; do not quietly forget it.
+# SURVIVORSHIP BIAS — read before trusting any long-only result from this data.
+#
+# Every name below still trades today. Companies that were liquid and then
+# failed or were acquired (SIVB, FRC, TWTR, ATVI, CERN, XLNX, …) are absent,
+# which flatters any long-only strategy: the sample quietly excludes the worst
+# outcomes. This was tested rather than assumed — the source returns ZERO bars
+# for all six of those tickers, so the bias CANNOT be corrected here. Any
+# future result must be read as an optimistic bound, and a negative result is
+# therefore stronger than it looks.
+#
+# Breadth is the legitimate frequency lever: identical selectivity across ~7x
+# the names yields ~7x the signals without touching a single entry gate.
 UNIVERSE = [
-    # mega-cap tech
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "ORCL", "CRM", "ADBE",
-    # semis / hardware
-    "AMD", "MU", "INTC", "QCOM", "TXN", "DELL", "HPQ",
-    # financials
-    "JPM", "BAC", "WFC", "GS", "MS", "AXP", "SCHW", "MET", "PNC",
-    # health
-    "UNH", "JNJ", "PFE", "ABBV", "LLY", "TMO", "CVS",
-    # consumer / retail
-    "WMT", "COST", "HD", "LOW", "TGT", "NKE", "SBUX", "MCD", "BBY",
-    # industrials / energy / materials
-    "CAT", "DE", "HON", "GE", "RTX", "LMT", "UNP", "PCAR", "MMM",
-    "XOM", "CVX", "COP", "SLB", "BKR", "NEM", "FCX", "IP",
-    # autos / telecom / staples
-    "F", "GM", "T", "VZ", "KO", "PEP", "PG", "KHC", "ADM", "SYY",
+    # --- mega/large-cap tech, software, internet ---
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "GOOG", "META", "AVGO", "ORCL", "CRM",
+    "ADBE", "NOW", "INTU", "IBM", "ACN", "CTSH", "EPAM", "IT", "ADSK", "ROP",
+    "PTC", "TYL", "ANSS", "SNPS", "CDNS", "FTNT", "PANW", "CRWD", "ZS", "OKTA",
+    "NET", "DDOG", "SNOW", "MDB", "TEAM", "WDAY", "VEEV", "HUBS", "ZM", "DOCU",
+    "TWLO", "SHOP", "SQ", "PYPL", "FI", "GPN", "FIS", "MA", "V", "ADP",
+    "PAYX", "CDW", "GDDY", "AKAM", "VRSN", "FFIV", "JNPR", "CSCO", "MSI", "ZBRA",
+    # --- semis and hardware ---
+    "AMD", "MU", "INTC", "QCOM", "TXN", "AMAT", "LRCX", "KLAC", "ADI", "NXPI",
+    "MCHP", "ON", "SWKS", "QRVO", "MRVL", "TER", "ENTG", "SMCI", "ANET", "DELL",
+    "HPQ", "HPE", "NTAP", "STX", "WDC", "PSTG", "KEYS", "TDY", "TRMB", "GRMN",
+    "GLW", "APH", "TEL", "FLEX", "JBL", "SANM", "CLS", "LITE", "COHR", "MPWR",
+    # --- financials: banks, brokers, cards ---
+    "JPM", "BAC", "WFC", "C", "GS", "MS", "SCHW", "AXP", "COF", "DFS",
+    "SYF", "ALLY", "BK", "STT", "NTRS", "PNC", "USB", "TFC", "KEY", "RF",
+    "CFG", "HBAN", "FITB", "MTB", "ZION", "CMA", "WAL", "PB", "SNV", "FHN",
+    "BLK", "BX", "KKR", "APO", "ARES", "TROW", "BEN", "IVZ", "AMP", "RJF",
+    "HOOD", "COIN", "SOFI", "LPLA", "MKTX", "CBOE", "CME", "ICE", "NDAQ", "SPGI",
+    "MCO", "MSCI", "FDS", "TRU", "EFX", "FICO",
+    # --- insurance ---
+    "BRK-B", "PGR", "ALL", "TRV", "CB", "AIG", "MET", "PRU", "LNC", "PFG",
+    "AFL", "UNM", "GL", "HIG", "CINF", "WRB", "AIZ", "ERIE", "RGA", "EG",
+    # --- health care ---
+    "UNH", "JNJ", "PFE", "MRK", "ABBV", "LLY", "BMY", "AMGN", "GILD", "BIIB",
+    "VRTX", "REGN", "MRNA", "ILMN", "TMO", "DHR", "ABT", "BDX", "BSX", "SYK",
+    "ZBH", "EW", "ISRG", "MDT", "BAX", "HOLX", "RMD", "DXCM", "PODD", "ALGN",
+    "XRAY", "CAH", "MCK", "COR", "CVS", "CI", "ELV", "HUM", "CNC", "MOH",
+    "HCA", "UHS", "DVA", "IQV", "A", "WAT", "MTD", "PKI", "TECH", "CRL",
+    "HIMS", "ZTS", "IDXX",
+    # --- consumer discretionary / retail ---
+    "WMT", "COST", "TGT", "HD", "LOW", "DG", "DLTR", "ROST", "TJX", "BURL",
+    "BBY", "ORLY", "AZO", "AAP", "GPC", "LKQ", "TSCO", "ULTA", "LULU", "NKE",
+    "DECK", "CROX", "SKX", "VFC", "PVH", "RL", "TPR", "KMX", "CVNA", "LAD",
+    "AN", "PAG", "ABG", "GPI", "W", "CHWY", "ETSY", "EBAY", "BABA", "MELI",
+    # --- restaurants / travel / leisure ---
+    "MCD", "SBUX", "CMG", "YUM", "QSR", "DRI", "DPZ", "WEN", "TXRH", "EAT",
+    "BKNG", "EXPE", "ABNB", "MAR", "HLT", "H", "WH", "CHH", "RCL", "CCL",
+    "NCLH", "LVS", "WYNN", "MGM", "CZR", "DKNG", "LYV", "PLAY",
+    # --- consumer staples ---
+    "PG", "KO", "PEP", "KHC", "GIS", "K", "HSY", "SJM", "CPB", "CAG",
+    "HRL", "TSN", "CL", "KMB", "CHD", "CLX", "EL", "COTY", "MO", "PM",
+    "STZ", "TAP", "MNST", "KDP", "MDLZ", "SYY", "ADM", "BG", "KR", "ACI",
+    # --- energy ---
+    "XOM", "CVX", "COP", "EOG", "OXY", "HES", "DVN", "FANG", "MRO", "APA",
+    "CTRA", "OVV", "SLB", "HAL", "BKR", "NOV", "FTI", "CHX", "WMB", "KMI",
+    "OKE", "TRGP", "EPD", "ET", "MPLX", "PSX", "VLO", "MPC", "DINO", "PBF",
+    # --- utilities ---
+    "NEE", "DUK", "SO", "D", "AEP", "EXC", "XEL", "ED", "WEC", "ES",
+    "DTE", "AEE", "CMS", "CNP", "NI", "LNT", "EVRG", "PNW", "ATO", "SRE",
+    "PEG", "PPL", "FE", "AES", "VST", "NRG", "CEG",
+    # --- industrials ---
+    "CAT", "DE", "HON", "GE", "MMM", "EMR", "ETN", "ITW", "PH", "ROK",
+    "DOV", "IEX", "XYL", "FTV", "AME", "AOS", "SWK", "SNA", "PNR", "GGG",
+    "RTX", "LMT", "NOC", "GD", "LHX", "HII", "TXT", "TDG", "HEI", "CW",
+    "BA", "SPR", "UNP", "CSX", "NSC", "ODFL", "JBHT", "CHRW", "EXPD", "XPO",
+    "SAIA", "LSTR", "UPS", "FDX", "DAL", "UAL", "AAL", "LUV", "ALK", "URI",
+    "FAST", "GWW", "WSO", "POOL", "SITE", "BLD", "MAS", "FBIN", "OC", "WMS",
+    "PCAR", "CMI", "PWR", "J", "ACM", "MTZ", "EME", "FIX",
+    # --- materials ---
+    "LIN", "APD", "SHW", "PPG", "RPM", "ECL", "NEM", "FCX", "AA", "CLF",
+    "X", "NUE", "STLD", "CMC", "RS", "ATI", "CRS", "MP", "ALB", "CE",
+    "EMN", "DOW", "LYB", "WLK", "OLN", "ASH", "IFF", "DD", "CTVA", "MOS",
+    "CF", "NTR", "IP", "PKG", "SON", "SEE", "AMCR", "BALL", "CCK", "SLGN",
+    # --- REITs ---
+    "PLD", "AMT", "CCI", "EQIX", "DLR", "SPG", "O", "VICI", "WELL", "VTR",
+    "ARE", "BXP", "KIM", "REG", "FRT", "ESS", "AVB", "EQR", "MAA", "UDR",
+    "CPT", "INVH", "AMH", "EXR", "PSA", "CUBE", "IRM", "WY",
+    # --- autos / transport equipment ---
+    "F", "GM", "TSLA", "RIVN", "LCID", "STLA", "HMC", "TM", "RACE", "APTV",
+    "BWA", "LEA", "ALV", "GT", "THRM",
+    # --- telecom / media / entertainment ---
+    "T", "VZ", "TMUS", "CMCSA", "CHTR", "DIS", "NFLX", "WBD", "PARA", "FOXA",
+    "NWSA", "EA", "TTWO", "RBLX", "U", "MTCH", "PINS", "SNAP", "SPOT", "OMC",
+    "IPG", "NYT",
 ]
 
 CHART_URL = ("https://query1.finance.yahoo.com/v8/finance/chart/{sym}"

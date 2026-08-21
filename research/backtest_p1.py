@@ -98,6 +98,9 @@ MAX_GAP_UP           = 0.02
 TIME_STOP_SESSIONS   = 20
 EMA_EXIT_CONSECUTIVE = 2
 TRAIL_ATR_MULT       = 1.5
+DEFAULT_COST_BPS     = 10.0     # 0.10% ROUND TRIP: spread crossing + slippage.
+                                # Every result produced before this existed was
+                                # optimistic by exactly this much.
 
 
 # ────────────────────────────── data ──────────────────────────────
@@ -249,6 +252,7 @@ class Trade:
     r_multiple: float = 0.0
     bars_held: int = 0
     exit_reason: str = ""
+    cost_r: float = 0.0
 
 
 class Indicators:
@@ -385,7 +389,8 @@ def find_signals(s: Series, ind: Indicators, spy: Series, spy_ind: Indicators,
 
 # ────────────────────────────── execution ──────────────────────────────
 def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str,
-             ema_exit: int = EMA_EXIT_CONSECUTIVE) -> Trade | None:
+             ema_exit: int = EMA_EXIT_CONSECUTIVE,
+             cost_bps: float = DEFAULT_COST_BPS) -> Trade | None:
     """Enter at sig.idx+1 and manage forward. Returns None if the limit never filled
     or the trade was voided by the gap rule."""
     e = sig.idx + 1
@@ -491,7 +496,12 @@ def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str,
         realized += remaining * (s.c[-1] - entry) / R
         t.exit_date, t.exit_reason = s.date[-1], "end_of_data"
 
-    t.r_multiple = realized
+    # One round trip on the full position, expressed in R. Partial exits do not
+    # multiply it: you enter once and leave once, however many pieces the exit
+    # is split into. Charged unconditionally so no code path can dodge it.
+    cost_R = entry * (cost_bps / 10_000.0) / R
+    t.cost_r = cost_R
+    t.r_multiple = realized - cost_R
     t.bars_held = max(1, (d if d < len(s) else len(s) - 1) - e)
     return t
 
@@ -500,7 +510,8 @@ def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str,
 def run(stop_model: str, target_mode: str = "measured_move",
         start: str = "", end: str = "",
         ema_exit: int = EMA_EXIT_CONSECUTIVE,
-        cfg: Config = DEFAULT_CONFIG) -> dict:
+        cfg: Config = DEFAULT_CONFIG,
+        cost_bps: float = DEFAULT_COST_BPS) -> dict:
     spy = load_bars(os.path.join(DATA_DIR, f"{BENCHMARK}.csv"))
     spy_ind = Indicators(spy)
     spy_idx = {d: i for i, d in enumerate(spy.date)}
@@ -535,7 +546,7 @@ def run(stop_model: str, target_mode: str = "measured_move",
                 continue
             if end and sig.date > end:
                 continue
-            tr = simulate(s, ind, sig, stop_model, ema_exit)
+            tr = simulate(s, ind, sig, stop_model, ema_exit, cost_bps)
             if tr is None:
                 continue
             trades.append(tr)
@@ -545,6 +556,7 @@ def run(stop_model: str, target_mode: str = "measured_move",
         "stop_model": stop_model,
         "target_mode": target_mode,
         "ema_exit": ema_exit,
+        "cost_bps": cost_bps,
         "window": f"{start or 'begin'}..{end or 'end'}",
         "symbols": symbols,
         "first_date": first_date, "last_date": last_date,
@@ -559,7 +571,8 @@ def summarize(res: dict) -> str:
     out = []
     a = out.append
     a(f"P1 BACKTEST — stop: {res['stop_model']}   target: {res['target_mode']}"
-      f"   ema_exit: {res['ema_exit'] or 'off'}   window: {res['window']}")
+      f"   ema_exit: {res['ema_exit'] or 'off'}   cost: {res['cost_bps']:.0f}bps"
+      f"   window: {res['window']}")
     a(f"  universe: {res['symbols']} symbols   period: {res['first_date']} .. {res['last_date']}")
     a(f"  signals generated: {res['signals']}")
     a(f"  trades taken:      {n}   (gap-voids and unfilled limits removed)")
@@ -628,6 +641,9 @@ def main() -> int:
     p.add_argument("--end", default="", help="only signals on/before this date (YYYY-MM-DD)")
     p.add_argument("--ema-exit", type=int, default=EMA_EXIT_CONSECUTIVE,
                    help="consecutive closes below the 20-EMA that force an exit; 0 disables")
+    p.add_argument("--cost-bps", type=float, default=DEFAULT_COST_BPS,
+                   help="round-trip transaction cost in basis points (default 10 = 0.10%%). "
+                        "Set 0 only to reproduce pre-cost historical numbers.")
     p.add_argument("--csv", default="", help="write per-trade rows to this path")
     args = p.parse_args()
 
@@ -638,7 +654,8 @@ def main() -> int:
     models = ["intraday", "close"] if args.stop_model == "both" else [args.stop_model]
     last = None
     for m in models:
-        last = run(m, args.target_mode, args.start, args.end, args.ema_exit)
+        last = run(m, args.target_mode, args.start, args.end, args.ema_exit,
+                   cost_bps=args.cost_bps)
         print(summarize(last))
         print()
 

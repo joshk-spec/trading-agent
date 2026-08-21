@@ -153,6 +153,57 @@ class TestCausality(unittest.TestCase):
                 self.assertAlmostEqual(full[i], part[i], places=9)
 
 
+class TestTransactionCosts(unittest.TestCase):
+    """Costs must always hurt. A cost model that can flatter a result is worse
+    than none, because it launders an optimistic number as a corrected one."""
+
+    def _trade(self, cost_bps):
+        bars = [(100, 101, 99, 100, 1e6)] * 3 + [(100, 101, 99, 100.0, 1e6),
+                                                 (100.0, 101, 99.5, 100.0, 1e6),
+                                                 (100, 125.0, 99.0, 124.0, 1e6),
+                                                 (124, 124.5, 80.0, 85.0, 1e6)]
+        s = make_series("X", bars)
+        sig = Signal("X", 3, s.date[3], 100.0, 90.0, 130.0)
+        return simulate(s, Indicators(s), sig, "intraday", cost_bps=cost_bps)
+
+    def test_higher_cost_never_improves_the_result(self):
+        prev = None
+        for bps in (0, 5, 10, 25, 50, 100):
+            r = self._trade(bps).r_multiple
+            if prev is not None:
+                self.assertLessEqual(r, prev + 1e-12,
+                                     f"{bps}bps scored better than the cheaper run")
+            prev = r
+
+    def test_zero_cost_matches_the_uncharged_result(self):
+        self.assertAlmostEqual(self._trade(0).cost_r, 0.0, places=12)
+
+    def test_cost_is_one_round_trip_not_one_per_partial_exit(self):
+        """This trade trims half at +2R and exits the rest later — two exits,
+        but still a single entry and a single position. Charging per exit would
+        double-count."""
+        t = self._trade(10)
+        R = 100.0 - 90.0
+        self.assertAlmostEqual(t.cost_r, 100.0 * 0.001 / R, places=12)
+
+    def test_cost_scales_linearly_with_bps(self):
+        self.assertAlmostEqual(self._trade(20).cost_r, 2 * self._trade(10).cost_r, places=12)
+
+    def test_a_wider_stop_dilutes_the_cost_in_R_terms(self):
+        """cost_R = entry*bps/R, so the same dollar cost is a smaller fraction
+        of a wider R. Tight-stop strategies are punished hardest by costs, which
+        is the real-world effect this is meant to capture."""
+        bars = [(100, 101, 99, 100, 1e6)] * 3 + [(100, 101, 99, 100.0, 1e6),
+                                                 (100.0, 101, 99.5, 100.0, 1e6),
+                                                 (100, 101, 70.0, 75.0, 1e6)]
+        s = make_series("X", bars)
+        tight = simulate(s, Indicators(s), Signal("X", 3, s.date[3], 100.0, 98.0, 110.0),
+                         "intraday", cost_bps=10)
+        wide = simulate(s, Indicators(s), Signal("X", 3, s.date[3], 100.0, 90.0, 130.0),
+                        "intraday", cost_bps=10)
+        self.assertGreater(tight.cost_r, wide.cost_r)
+
+
 class TestNoLookahead(unittest.TestCase):
     """THE test. Signals found at bar T must not change when bars after T are
     deleted or replaced with nonsense. If this fails, every reported number is
@@ -244,12 +295,17 @@ class TestExitAccounting(unittest.TestCase):
     """R arithmetic. A clean stop is exactly -1R; the +2R trim banks +1.0R."""
 
     def _run(self, after_entry, stop_model="intraday", stop=90.0, target=130.0):
+        # cost_bps=0 deliberately: these tests pin the R ARITHMETIC of the exit
+        # rules. Transaction costs are a separate concern with their own tests
+        # (TestTransactionCosts); leaving them on here would mean every exit
+        # assertion silently encodes the current cost default too, and changing
+        # that default would break tests that have nothing to do with costs.
         bars = [(100, 101, 99, 100, 1e6)] * 3 + [(100, 101, 99, 100.0, 1e6),
                                                  (100.0, 101, 99.5, 100.0, 1e6)] + after_entry
         s = make_series("X", bars)
         ind = Indicators(s)
         sig = Signal("X", 3, s.date[3], 100.0, stop, target)
-        return simulate(s, ind, sig, stop_model)
+        return simulate(s, ind, sig, stop_model, cost_bps=0.0)
 
     def test_clean_stop_out_is_exactly_minus_one_R(self):
         # entry 100, stop 90 -> R=10. Next bar trades down through 90.
