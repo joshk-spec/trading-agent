@@ -64,8 +64,24 @@ No ranges. A range would be two hypotheses.
 one line in the ledger. No parameter search afterwards — that is how the 20-EMA
 mistake nearly happened, and it is how 87 trades became an unfalsifiable story.
 
-**Split:** TRAIN = signals 1995-01-01 … 2015-12-31. HOLDOUT = 2016-01-01 …
-2026-08-21, consulted only if TRAIN passes, once.
+**Split — amended 2026-08-22, BEFORE any run of this hypothesis.**
+
+Originally written as TRAIN 1995-2015 / HOLDOUT 2016-2026. Amended to match the
+split `CAMPAIGN.md` already specifies, which I had not read when drafting this:
+
+- **TRAIN = signals 2011-01-01 … 2020-12-31**
+- **HOLDOUT = 2021-01-01 … 2026-08-21**, one run, only if TRAIN clears the bar
+- **RESERVE = 1995-01-01 … 2010-12-31**, untouched by any test in this project,
+  not to be consulted for this hypothesis at all
+
+The amendment is recorded rather than made silently because changing a split
+after seeing results is the classic way a backtest becomes a story. Nothing had
+been run: no result could have motivated it. It is also strictly the more
+conservative choice — it *reduces* the training data available and quarantines
+sixteen years that the deeper 1995 dataset made newly available, keeping them
+clean for a hypothesis that earns them later.
+
+This hypothesis is `CAMPAIGN.md`'s **H3**, arrived at independently.
 
 **Tests used so far (from TEST_LEDGER.md):** 20 train tests, 1 holdout
 consultation, all on P1, which is now closed.

@@ -25,8 +25,12 @@ from backtest_p1 import (  # noqa: E402
 )
 from strategies import ALL  # noqa: E402
 
-TRAIN = ("1995-01-01", "2015-12-31")
-HOLDOUT = ("2016-01-01", "2026-12-31")
+# Windows per CAMPAIGN.md. RESERVE (1995-2010) is deliberately absent: the
+# deeper dataset made it available, no test in this project has touched it,
+# and it stays that way until a hypothesis earns it.
+TRAIN = ("2011-01-01", "2020-12-31")
+HOLDOUT = ("2021-01-01", "2026-12-31")
+RESERVE = ("1995-01-01", "2010-12-31")   # not wired to any flag, by design
 
 # Promotion bar, from the mandate. All three required, on TRAIN.
 BAR_AVG_R = 0.10
