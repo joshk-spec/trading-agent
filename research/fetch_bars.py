@@ -14,6 +14,7 @@ downloaded unless --force is passed.
 """
 from __future__ import annotations
 
+import calendar
 import csv
 import json
 import os
@@ -117,15 +118,23 @@ UNIVERSE = [
     "IPG", "NYT",
 ]
 
+# Explicit epoch bounds, NOT range=max: range=max silently downgrades the
+# interval to quarterly bars, which would look like success and be useless.
+START_DATE = "1995-01-01"
 CHART_URL = ("https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
-             "?range={rng}&interval=1d")
+             "?period1={p1}&period2={p2}&interval=1d")
 
 
-def fetch(symbol: str, rng: str = "15y") -> list[dict]:
+def _epoch(day: str) -> int:
+    return calendar.timegm(time.strptime(day, "%Y-%m-%d"))
+
+
+def fetch(symbol: str, start: str = START_DATE) -> list[dict]:
     """Return a list of bar dicts, oldest first. Raises on any problem —
     a silently short or empty series would corrupt the backtest."""
     req = urllib.request.Request(
-        CHART_URL.format(sym=symbol, rng=rng),
+        CHART_URL.format(sym=symbol, p1=_epoch(start),
+                         p2=int(time.time())),
         headers={"User-Agent": "Mozilla/5.0"},
     )
     with urllib.request.urlopen(req, timeout=30) as r:

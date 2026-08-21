@@ -240,6 +240,38 @@ class Signal:
     target: float
 
 
+@dataclass(frozen=True)
+class ExitRules:
+    """How a position is managed once filled, separated from how it was chosen.
+
+    Defaults reproduce P1 exactly, so every existing test and result is
+    unchanged. A new mechanism supplies its own: mean reversion does not want a
+    20-EMA trend exit, and a gap trade does not want a 20-session hold. Keeping
+    ONE tested exit engine and varying its rules is the point — a second copy
+    per strategy is how the two documents in this repo came to disagree about
+    what a stop was."""
+    stop_model: str = "intraday"        # "intraday" (broker stop-limit) | "close"
+    breakeven_at_1r: bool = True
+    trim_half_at_2r: bool = True
+    trail_atr_mult: float = TRAIL_ATR_MULT
+    ema_exit_period: int = EMA_PERIOD
+    ema_exit_consecutive: int = EMA_EXIT_CONSECUTIVE   # 0 = off
+    time_stop_sessions: int = TIME_STOP_SESSIONS       # 0 = off
+    exit_at_target: bool = False        # take the whole position at the target
+    exit_when_close_above_sma: int = 0   # 0 = off; else exit once close > SMA(n).
+                                        # A mean-reversion objective: the trade is
+                                        # over when the dislocation has closed,
+                                        # whether or not the target was reached.
+    max_hold_sessions: int = 0          # 0 = off; hard exit regardless of P&L
+    enforce_min_rr: bool = True         # P1's [HARD] 2.0; off for mechanisms
+                                        # whose target is not a structural level
+    enforce_max_stop_pct: bool = True   # P1's [HARD] 12%-of-entry rejection
+    max_gap_up: float = MAX_GAP_UP      # void the trade above this gap
+
+
+P1_EXITS = ExitRules()
+
+
 @dataclass
 class Trade:
     symbol: str
@@ -258,16 +290,26 @@ class Trade:
 class Indicators:
     """Precomputed causal indicator arrays for one symbol."""
 
-    def __init__(self, s: Series):
+    def __init__(self, s: Series, ema_exit_period: int = EMA_PERIOD,
+                 sma_exit_period: int = 0, rsi_fast_period: int = 0):
         self.sma_fast = sma(s.c, SMA_FAST)
         self.sma_slow = sma(s.c, SMA_SLOW)
         self.ema20 = ema(s.c, EMA_PERIOD)
+        # Separate handle so a strategy can exit on a different EMA without a
+        # second Indicators object; identical to ema20 at the default period.
+        self.ema_exit = (self.ema20 if ema_exit_period == EMA_PERIOD
+                         else ema(s.c, ema_exit_period))
         self.rsi = rsi(s.c)
         self.atr = atr(s.h, s.l, s.c)
         self.roc20 = roc(s.c, RS_LOOKBACK)
         self.vol_avg = sma(s.v, VOL_AVG_LOOKBACK)
         dollar = [s.c[i] * s.v[i] for i in range(len(s))]
         self.adv = sma(dollar, VOL_AVG_LOOKBACK)
+        # Optional series a non-P1 strategy may need. None when unused so a
+        # strategy that forgets to request one fails loudly instead of
+        # silently comparing against the wrong period.
+        self.sma_exit = sma(s.c, sma_exit_period) if sma_exit_period else None
+        self.rsi_fast = rsi(s.c, rsi_fast_period) if rsi_fast_period else None
 
 
 def _regime_ok(spy: Series, spy_ind: Indicators, j: int) -> bool:
@@ -389,16 +431,20 @@ def find_signals(s: Series, ind: Indicators, spy: Series, spy_ind: Indicators,
 
 # ────────────────────────────── execution ──────────────────────────────
 def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str,
-             ema_exit: int = EMA_EXIT_CONSECUTIVE,
-             cost_bps: float = DEFAULT_COST_BPS) -> Trade | None:
+             ema_exit: int | None = None,
+             cost_bps: float = DEFAULT_COST_BPS,
+             exits: ExitRules = P1_EXITS) -> Trade | None:
     """Enter at sig.idx+1 and manage forward. Returns None if the limit never filled
     or the trade was voided by the gap rule."""
+    # `ema_exit` is a legacy override kept so existing callers and the
+    # gate/EMA studies still work; ExitRules is the general path.
+    ema_n = exits.ema_exit_consecutive if ema_exit is None else ema_exit
     e = sig.idx + 1
     if e >= len(s):
         return None
 
     # [HARD] gap-void: more than 2% above the trigger close and the trade is gone.
-    if s.o[e] > sig.trigger_close * (1 + MAX_GAP_UP):
+    if s.o[e] > sig.trigger_close * (1 + exits.max_gap_up):
         return None
 
     # Limit at or below the trigger close.
@@ -413,9 +459,9 @@ def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str,
     if entry <= stop0:
         return None
     # §6 step 5 re-verifies the [HARD] rules against the ACTUAL fill, not the plan.
-    if (entry - stop0) / entry > MAX_STOP_PCT:
+    if exits.enforce_max_stop_pct and (entry - stop0) / entry > MAX_STOP_PCT:
         return None
-    if (sig.target - entry) / (entry - stop0) < MIN_RR:
+    if exits.enforce_min_rr and (sig.target - entry) / (entry - stop0) < MIN_RR:
         return None
 
     R = entry - stop0
@@ -443,7 +489,7 @@ def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str,
         # 1. Stop first. Within a single bar we cannot know whether the stop or
         #    the target was touched first, so we assume the stop — the
         #    conservative choice, and the one that avoids flattering the result.
-        if stop_model == "intraday":
+        if (stop_model or exits.stop_model) == "intraday":
             if s.l[d] <= cur_stop:
                 fill = min(s.o[d], cur_stop)          # a gap-down fills below the stop
                 realized += remaining * (fill - entry) / R
@@ -455,7 +501,8 @@ def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str,
                 pending_exit = "stop"
 
         # 2. +2R: trim half, trail the rest at 1.5 ATR.
-        if remaining == 1.0 and not hit_2r and s.h[d] >= entry + 2 * R:
+        if (exits.trim_half_at_2r and remaining == 1.0 and not hit_2r
+                and s.h[d] >= entry + 2 * R):
             realized += 0.5 * (entry + 2 * R - entry) / R      # = 1.0R on half
             remaining = 0.5
             hit_2r = hit_1r = True
@@ -464,31 +511,47 @@ def simulate(s: Series, ind: Indicators, sig: Signal, stop_model: str,
             # and leave the remaining half exposed to a full -1R from entry.
             cur_stop = max(cur_stop, entry)
             a = ind.atr[d]
-            if a:
-                cur_stop = max(cur_stop, s.c[d] - TRAIL_ATR_MULT * a)
+            if a and exits.trail_atr_mult:
+                cur_stop = max(cur_stop, s.c[d] - exits.trail_atr_mult * a)
+
+        # 2b. Whole-position exit at the target, for mechanisms with a
+        #     definite objective rather than a trend to ride.
+        if exits.exit_at_target and remaining > 0 and s.h[d] >= sig.target:
+            realized += remaining * (sig.target - entry) / R
+            t.exit_date, t.exit_reason = s.date[d], "target"
+            remaining = 0.0
+            break
 
         # 3. +1R: stop to breakeven.
-        if not hit_1r and s.h[d] >= entry + R:
+        if exits.breakeven_at_1r and not hit_1r and s.h[d] >= entry + R:
             hit_1r = True
             cur_stop = max(cur_stop, entry)
 
         # 4. Trail the remainder once half is off.
         if hit_2r and remaining > 0:
             a = ind.atr[d]
-            if a:
-                cur_stop = max(cur_stop, s.c[d] - TRAIL_ATR_MULT * a)
+            if a and exits.trail_atr_mult:
+                cur_stop = max(cur_stop, s.c[d] - exits.trail_atr_mult * a)
 
         # 5. Close-based signal exits, executed next open.
         if not pending_exit:
-            e20 = ind.ema20[d]
-            if e20 is not None and s.c[d] < e20:
+            e20 = ind.ema_exit[d]
+            if ema_n and e20 is not None and s.c[d] < e20:
                 below_ema += 1
-                if ema_exit and below_ema >= ema_exit:
+                if below_ema >= ema_n:
                     pending_exit = "ema20"
             else:
                 below_ema = 0
-            if not pending_exit and held >= TIME_STOP_SESSIONS and not hit_1r:
+            if (not pending_exit and exits.exit_when_close_above_sma):
+                sx = ind.sma_exit[d] if ind.sma_exit else None
+                if sx is not None and s.c[d] > sx:
+                    pending_exit = "reverted"
+            if (not pending_exit and exits.time_stop_sessions
+                    and held >= exits.time_stop_sessions and not hit_1r):
                 pending_exit = "time_stop"
+            if (not pending_exit and exits.max_hold_sessions
+                    and held >= exits.max_hold_sessions):
+                pending_exit = "max_hold"
 
         d += 1
 
