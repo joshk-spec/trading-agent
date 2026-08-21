@@ -8,8 +8,10 @@ in its output reveals it.
 """
 from __future__ import annotations
 
+import math
 import os
 import random
+import statistics
 import sys
 import unittest
 
@@ -70,14 +72,43 @@ class TestSignalGate(unittest.TestCase):
             self.assertLessEqual(counts[i], counts[i - 1], M.GATES[i])
 
     def test_below_the_200_sma_never_signals(self):
-        """The trend filter is the only thing separating a dip from a collapse."""
+        """The trend filter is the only thing separating a dip from a collapse,
+        so it must be tested in isolation.
+
+        An earlier version of this test collapsed the tail to $0.01, which trips
+        the $5 minimum-price gate FIRST and never reaches the trend check — it
+        passed with the 200-SMA filter entirely removed. The tail here stays
+        well above $5 and liquid, and declines hard enough that RSI(2) is deep
+        below 5, so the ONLY thing that can suppress a signal is the trend
+        filter. If that filter is deleted, this test fails."""
         s = uptrend_then_dip()
-        # Force every close under a huge 200-SMA by collapsing the tail.
-        for i in range(len(s) - 40, len(s)):
-            s.c[i] = 0.01
-            s.o[i] = s.h[i] = s.l[i] = 0.01
+        tail = 40
+        px = 40.0
+        for i in range(len(s) - tail, len(s)):
+            px *= 0.97                       # a genuine collapse, not a dip
+            s.c[i] = px
+            s.o[i] = px * 1.01
+            s.h[i] = px * 1.02
+            s.l[i] = px * 0.99
+            s.v[i] = 9_000_000
+
+        # The tail must genuinely LOOK like a buy to every other gate, or the
+        # test proves nothing.
+        from backtest_p1 import sma as _sma, rsi as _rsi
+        trend, fast = _sma(s.c, M.TREND_SMA), _rsi(s.c, M.RSI_PERIOD)
+        tail_idx = range(len(s) - tail + 2, len(s))
+        self.assertTrue(all(s.c[i] > M.MIN_PRICE for i in tail_idx),
+                        "tail fell below $5 — the price gate would mask the trend gate")
+        self.assertTrue(any(fast[i] is not None and fast[i] < M.RSI_THRESHOLD
+                            for i in tail_idx),
+                        "tail never became oversold — nothing to suppress")
+        self.assertTrue(all(trend[i] is not None and s.c[i] <= trend[i]
+                            for i in tail_idx),
+                        "tail did not fall below its own 200-SMA")
+
         idxs, _ = M.signals_and_funnel(s, WIDE)
-        self.assertTrue(all(i < len(s) - 40 for i in idxs))
+        self.assertFalse([i for i in idxs if i >= len(s) - tail + 2],
+                         "signalled below the 200-SMA — the trend filter is not working")
 
     def test_illiquid_names_are_excluded(self):
         s = uptrend_then_dip()
@@ -170,6 +201,94 @@ class TestExecution(unittest.TestCase):
                       + [(100, 130, 99, 129.0, 1e7), (128.0, 129, 127, 128, 1e7)])
         self.assertNotEqual(t.exit_reason, "disaster")
         self.assertGreater(t.r_multiple, 0)
+
+
+def _mk(sym, entry_date, exit_date, r, rsi_v=1.0):
+    t = M.MRTrade(sym, entry_date, entry_date, 100.0)
+    t.exit_date, t.r_multiple, t.rsi_at_signal = exit_date, r, rsi_v
+    return t
+
+
+class TestSlotAllocation(unittest.TestCase):
+    """Without a portfolio cap the backtest books trades the live system could
+    never hold — on TRAIN, a median of 17 and a peak of 228 simultaneous
+    positions. An average over those is not an executable result."""
+
+    def test_never_exceeds_the_slot_count(self):
+        cands = [_mk(f"S{i}", "2015-01-05", "2015-01-20", 0.1) for i in range(50)]
+        for slots in (1, 5, 15):
+            taken, stats = M.allocate(cands, slots)
+            self.assertEqual(len(taken), slots)
+            self.assertEqual(stats["skipped"], 50 - slots)
+
+    def test_slots_are_reused_once_positions_close(self):
+        cands = [_mk("A", "2015-01-05", "2015-01-06", 0.1),
+                 _mk("B", "2015-01-07", "2015-01-08", 0.1),
+                 _mk("C", "2015-01-09", "2015-01-10", 0.1)]
+        taken, _ = M.allocate(cands, 1)
+        self.assertEqual(len(taken), 3)      # sequential, never overlapping
+
+    def test_rsi_tiebreak_takes_the_most_oversold(self):
+        cands = [_mk("HI", "2015-01-05", "2015-02-01", 0.0, rsi_v=4.9),
+                 _mk("LO", "2015-01-05", "2015-02-01", 0.0, rsi_v=0.2)]
+        taken, _ = M.allocate(cands, 1, "rsi")
+        self.assertEqual(taken[0].symbol, "LO")
+
+    def test_constraint_actually_binds_on_real_data(self):
+        """Regression guard: if this stops binding, the cap has been bypassed."""
+        cands, _ = M.candidates(("2015-01-01", "2015-12-31"), 10.0)
+        self.assertGreater(len(cands), 50)
+        taken, stats = M.allocate(cands, 15)
+        self.assertLess(len(taken), len(cands))
+        self.assertGreater(stats["skipped"], 0)
+
+
+class TestDrawdownIsChronological(unittest.TestCase):
+    def test_symbol_order_would_understate_drawdown(self):
+        """The published -10.9R came from walking trades in SYMBOL order, which
+        is not an equity curve. Chronologically it was -94.3R."""
+        # Each symbol alternates win-then-loss, so in SYMBOL order the losses
+        # are spread out and the curve looks smooth. Chronologically both losses
+        # land together in June, which is the real drawdown.
+        trades = [_mk("AAA", "2015-01-01", "2015-01-02", +1.0),
+                  _mk("AAA", "2015-06-01", "2015-06-02", -1.0),
+                  _mk("ZZZ", "2015-01-03", "2015-01-04", +1.0),
+                  _mk("ZZZ", "2015-06-03", "2015-06-04", -1.0)]
+        def mdd(seq):
+            peak = cum = m = 0.0
+            for r in seq:
+                cum += r; peak = max(peak, cum); m = min(m, cum - peak)
+            return m
+        as_listed = mdd([t.r_multiple for t in trades])
+        chrono = mdd([t.r_multiple for t in sorted(trades, key=lambda t: t.exit_date)])
+        self.assertLess(chrono, as_listed)   # the real curve is worse
+
+
+class TestClusteredT(unittest.TestCase):
+    def test_same_day_trades_count_as_one_observation(self):
+        """20 copies of one day's outcome must not look like 20 observations."""
+        many = [_mk(f"S{i}", "2015-01-05", "2015-01-09", 0.10) for i in range(20)]
+        many += [_mk(f"T{i}", "2015-02-05", "2015-02-09", -0.02) for i in range(20)]
+        t_cl, n_days = M.clustered_t(many)
+        self.assertEqual(n_days, 2)
+        naive_n = len(many)
+        self.assertLess(n_days, naive_n)
+
+    def test_n_is_distinct_days_not_trade_count_on_real_data(self):
+        """The correction is about the DENOMINATOR, not the direction.
+
+        Clustering does not monotonically shrink t -- it removes a dependence
+        assumption, and the result can move either way depending on how the
+        within-day and between-day variances compare. On the full TRAIN it cut
+        +9.91 to +3.47; on a two-year slice it moves the other way. Asserting
+        "smaller" would encode a claim that is simply not true, so this pins
+        the mechanism instead."""
+        trades, _ = M.run(("2015-01-01", "2016-12-31"), 10.0, 15)
+        self.assertGreater(len(trades), 50)
+        _, n_days = M.clustered_t(trades)
+        distinct = len({t.entry_date for t in trades})
+        self.assertEqual(n_days, distinct)
+        self.assertLess(n_days, len(trades))
 
 
 class TestCosts(unittest.TestCase):

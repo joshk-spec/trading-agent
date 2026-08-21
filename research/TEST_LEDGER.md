@@ -146,3 +146,58 @@ open question in FINDINGS.md. I am not restating that bar while holding the
 result; that decision is the operator's.
 
 **Running total: 21 train runs, 1 holdout use of 3.**
+
+### CORRECTION 2026-08-22 — the numbers above were wrong in two ways
+
+A code review found two defects that materially inflated the H002 result. Both
+were verified independently before fixing. **The corrected result is worse and
+changes the conclusion.**
+
+**1. Max drawdown was computed in symbol order, not chronological order.**
+`run()` appends trades symbol-by-symbol, so the cumulative-R loop walked AAPL's
+entire decade, then AA's — a symbol-ordered sequence, not an equity curve.
+Published −10.9R; actual **−94.3R** unconstrained. `backtest_p1.py` had the
+identical defect (P1's −49.9R → **−61.2R**).
+
+**2. No portfolio constraint — the 16,604 trades were not executable.**
+The specification says "equal weight across MAX_CONCURRENT slots" and the
+backtest booked every signal on every symbol: **median 17 and peak 228
+simultaneous positions**, with 52% of days exceeding even 15 slots. The average
+was taken over a portfolio nobody could run.
+
+### H002 CORRECTED — 15 slots, the mandate's MAX_CONCURRENT
+
+| | unconstrained (wrong) | 15 slots (executable) |
+|---|---|---|
+| trades | 16,604 | **5,806** |
+| avg %/trade after costs | +0.274% | **+0.154%** |
+| average R | +0.0183 | **+0.0102** |
+| clustered t | +3.47 | **+2.57** |
+| max drawdown | −10.9R (wrong) | **−34.4R** |
+
+The slot cap roughly **halves** the per-trade edge, because the constraint bites
+hardest exactly when the mechanism pays most — during market-wide selloffs,
+when far more signals fire than there are slots to hold them.
+
+**Slot-allocation rule is not load-bearing** (it is a free parameter, so all
+three were run rather than the best one quoted): most-oversold-first +0.0102,
+random +0.0105, alphabetical +0.0113. Arbitrary ordering does marginally
+*better* than picking the most oversold.
+
+### The economic verdict, which is the one that matters
+
+| | |
+|---|---|
+| account return, 15 slots, 2011-2020 | **+59.4%** (+4.77%/yr) |
+| SPY buy-and-hold, same window | **+194.3%** (+11.40%/yr) |
+| capital utilisation | 9.5 of 15 slots (63%) |
+
+**It loses to the index by more than half.** The mandate's own standard is
+"beating a savings account is not the bar; beating buying the index is." On
+TRAIN — with survivorship bias flattering it, and before the disaster stop
+proves unenforceable at $50 — short-term reversal returns 4.8%/yr against SPY's
+11.4%.
+
+**VERDICT: FAILS.** avg R +0.0102 against a +0.05 bar (5× short). Clustered t
++2.57 scrapes past 2.5 but does **not** clear the Bonferroni threshold (~3.0)
+for this project's 22 tests. **No holdout spent — budget remains 1/3.**

@@ -27,6 +27,7 @@ import argparse
 import glob
 import math
 import os
+import random
 import statistics
 import sys
 from dataclasses import dataclass
@@ -49,7 +50,10 @@ DISASTER_STOP_PCT  = 0.15          # 1R is defined as this fraction of entry
 ADV_LOOKBACK       = 20
 
 TRAIN = ("2011-01-01", "2020-12-31")
-HOLDOUT = ("2021-01-01", "2026-12-31")
+# End date is the pre-registration's, not "end of data": once fetch_bars.py
+# runs again the window would silently widen, which is exactly the drift a
+# one-shot holdout protocol exists to prevent.
+HOLDOUT = ("2021-01-01", "2026-08-21")
 
 # Promotion bar (pre-registration 002). All three required, TRAIN only.
 BAR_AVG_R, BAR_T, BAR_TRADES = 0.05, 2.5, 500
@@ -70,6 +74,7 @@ class MRTrade:
     exit_reason: str = ""
     r_multiple: float = 0.0
     pct_return: float = 0.0
+    rsi_at_signal: float = 0.0
 
 
 def signals_and_funnel(s: Series, window: tuple[str, str]) -> tuple[list[int], list[int]]:
@@ -111,8 +116,13 @@ def signals_and_funnel(s: Series, window: tuple[str, str]) -> tuple[list[int], l
     return out, counts
 
 
-def simulate(s: Series, idx: int, cost_bps: float) -> MRTrade | None:
-    """Enter at bar idx+1's open. Manage forward per the specification."""
+def simulate(s: Series, idx: int, cost_bps: float,
+             exit_sma: list[float | None] | None = None) -> MRTrade | None:
+    """Enter at bar idx+1's open. Manage forward per the specification.
+
+    `exit_sma` is passed in by run() because it is a pure function of the
+    series: recomputing a 5-bar mean over ~4,000 bars inside each of 16,000
+    simulate() calls was pointless O(bars) work per trade."""
     e = idx + 1
     if e >= len(s):
         return None
@@ -120,7 +130,8 @@ def simulate(s: Series, idx: int, cost_bps: float) -> MRTrade | None:
     if entry <= 0:
         return None
 
-    exit_sma = sma(s.c, EXIT_SMA)
+    if exit_sma is None:
+        exit_sma = sma(s.c, EXIT_SMA)
     disaster = entry * (1.0 - DISASTER_STOP_PCT)
     R = entry * DISASTER_STOP_PCT          # 1R, per the pre-registration
 
@@ -143,14 +154,18 @@ def simulate(s: Series, idx: int, cost_bps: float) -> MRTrade | None:
         if s.l[d] <= disaster:
             t.exit_price = min(s.o[d], disaster)
             t.exit_date, t.exit_reason = s.date[d], "disaster"
-            t.bars_held = max(held, 1)
+            t.bars_held = held        # 0 when the entry bar itself gapped through
             break
 
         # Reversion achieved: close back above the 5-day mean.
         x = exit_sma[d]
         if x is not None and s.c[d] > x:
             pending = "reverted"
-        elif held >= MAX_HOLD_SESSIONS:
+        elif held >= MAX_HOLD_SESSIONS - 1:
+            # Decided on this close, filled at the next open, so the position
+            # is exited ON session MAX_HOLD_SESSIONS. Setting it at
+            # `held >= MAX_HOLD_SESSIONS` held for 11 sessions, one more than
+            # the pre-registration allows.
             pending = "time_stop"
 
         d += 1
@@ -166,26 +181,116 @@ def simulate(s: Series, idx: int, cost_bps: float) -> MRTrade | None:
     return t
 
 
-def run(window: tuple[str, str], cost_bps: float) -> tuple[list[MRTrade], list[int]]:
-    trades: list[MRTrade] = []
+def candidates(window: tuple[str, str], cost_bps: float
+               ) -> tuple[list[MRTrade], list[int]]:
+    """Every trade the rules would generate if capital were unlimited.
+
+    A trade's outcome does not depend on what else is open, so generating all
+    candidates first and applying the portfolio constraint afterwards is exact,
+    not an approximation."""
+    out: list[MRTrade] = []
     totals = [0] * len(GATES)
     for path in sorted(glob.glob(os.path.join(DATA_DIR, "*.csv"))):
         s = load_bars(path)
         if s.symbol == BENCHMARK or len(s) < TREND_SMA + 50:
             continue
-        idxs, counts = signals_and_funnel(s, window)
+        sig, counts = signals_and_funnel(s, window)
         totals = [a + b for a, b in zip(totals, counts)]
+        exit_sma = sma(s.c, EXIT_SMA)
+        fast = rsi(s.c, RSI_PERIOD)
         busy_until = -1
-        for i in idxs:
-            # One position per symbol at a time, matching live behaviour.
-            if i <= busy_until:
+        for i in sig:
+            # One position per symbol at a time. Entry is i+1 and the exit bar
+            # is i+1+bars_held, so a later signal at j >= i+bars_held+1 enters
+            # strictly after this one closed. The previous `+1` here was one bar
+            # more conservative than that and silently dropped valid signals.
+            if i < busy_until:
                 continue
-            tr = simulate(s, i, cost_bps)
+            tr = simulate(s, i, cost_bps, exit_sma)
             if tr is None:
                 continue
-            trades.append(tr)
+            tr.rsi_at_signal = fast[i] if fast[i] is not None else 0.0
+            out.append(tr)
             busy_until = i + tr.bars_held + 1
-    return trades, totals
+    return out, totals
+
+
+def allocate(cands: list[MRTrade], max_slots: int,
+             tiebreak: str = "rsi") -> tuple[list[MRTrade], dict]:
+    """Apply the portfolio constraint: at most `max_slots` positions at once.
+
+    WHY THIS EXISTS. Without it the backtest books every signal, and on TRAIN
+    that means a median of 17 and a peak of 228 simultaneous positions — 52% of
+    days exceed even 15 slots. Those trades are not executable, so an average
+    taken over them describes a portfolio nobody could run.
+
+    Allocation walks forward in date order, frees slots whose exit date has
+    passed, then fills from that day's candidates. When more signals arrive than
+    slots remain, `tiebreak` decides:
+      "rsi"   — most oversold first, following the mechanism being tested
+      "random"— seeded, for checking the choice is not load-bearing
+      "symbol"— alphabetical, a deliberately arbitrary control
+    The rule IS a free parameter, so all three are reported rather than the
+    best one being quoted."""
+    by_day: dict[str, list[MRTrade]] = {}
+    for t in cands:
+        by_day.setdefault(t.entry_date, []).append(t)
+
+    rnd = random.Random(20260822)
+    taken: list[MRTrade] = []
+    open_until: list[str] = []          # exit dates of currently-held positions
+    skipped = 0
+
+    for day in sorted(by_day):
+        open_until = [d for d in open_until if d > day]
+        todays = by_day[day]
+        if tiebreak == "rsi":
+            todays = sorted(todays, key=lambda t: t.rsi_at_signal)
+        elif tiebreak == "symbol":
+            todays = sorted(todays, key=lambda t: t.symbol)
+        else:
+            todays = list(todays)
+            rnd.shuffle(todays)
+
+        for t in todays:
+            if len(open_until) >= max_slots:
+                skipped += 1
+                continue
+            taken.append(t)
+            open_until.append(t.exit_date)
+
+    return taken, {"candidates": len(cands), "taken": len(taken),
+                   "skipped": skipped, "slots": max_slots, "tiebreak": tiebreak}
+
+
+def run(window: tuple[str, str], cost_bps: float, max_slots: int = 0,
+        tiebreak: str = "rsi") -> tuple[list[MRTrade], list[int]]:
+    """max_slots=0 means unconstrained (the old, non-executable behaviour)."""
+    cands, totals = candidates(window, cost_bps)
+    if not max_slots:
+        return cands, totals
+    taken, _ = allocate(cands, max_slots, tiebreak)
+    return taken, totals
+
+
+def clustered_t(trades: list[MRTrade]) -> tuple[float, int]:
+    """t-statistic treating each entry DAY as one observation.
+
+    Signals fire together on market-wide selloffs -- median 5 a day, peak 110 --
+    so a per-trade t counts one bet many times over. On TRAIN this inflates the
+    statistic roughly 2.9x (+9.91 naive vs +3.47 clustered). The promotion gate
+    reads THIS number: deciding a scarce holdout spend on the naive one would
+    mean spending it on an artifact."""
+    by_day: dict[str, list[float]] = {}
+    for t in trades:
+        by_day.setdefault(t.entry_date, []).append(t.r_multiple)
+    if len(by_day) < 2:
+        return 0.0, len(by_day)
+    day_avgs = [statistics.fmean(v) for v in by_day.values()]
+    sd = statistics.stdev(day_avgs)
+    if sd == 0:
+        return 0.0, len(day_avgs)
+    return statistics.fmean(day_avgs) / (sd / math.sqrt(len(day_avgs))), len(day_avgs)
 
 
 def report(label: str, window, trades: list[MRTrade], totals: list[int],
@@ -208,8 +313,12 @@ def report(label: str, window, trades: list[MRTrade], totals: list[int],
         print("  too few trades to evaluate")
         return 0.0, 0.0, n
 
-    rs = [t.r_multiple for t in trades]
-    pcts = [t.pct_return for t in trades]
+    # Chronological by exit date. Walking the list as emitted meant walking
+    # AAPL's entire history, then AA's -- a symbol-ordered sequence, not an
+    # equity curve. That understated max drawdown by ~8.6x.
+    chrono = sorted(trades, key=lambda t: (t.exit_date, t.symbol))
+    rs = [t.r_multiple for t in chrono]
+    pcts = [t.pct_return for t in chrono]
     avg = statistics.fmean(rs)
     sd = statistics.stdev(rs)
     tstat = avg / (sd / math.sqrt(n)) if sd else 0.0
@@ -233,7 +342,9 @@ def report(label: str, window, trades: list[MRTrade], totals: list[int],
     print(f"  max drawdown:  {mdd:.1f}R")
     print(f"  avg hold:      {statistics.fmean([t.bars_held for t in trades]):.1f} sessions")
     print(f"  std dev:       {sd:.4f}R")
-    print(f"  t-statistic:   {tstat:+.2f}")
+    print(f"  t-statistic:   {tstat:+.2f}   (naive; assumes trades are independent)")
+    cl_t, cl_n = clustered_t(trades)
+    print(f"  clustered t:   {cl_t:+.2f}   ({cl_n:,} distinct entry days) <- the one that counts")
 
     reasons: dict[str, list[float]] = {}
     for t in trades:
@@ -242,7 +353,7 @@ def report(label: str, window, trades: list[MRTrade], totals: list[int],
     for reason, vals in sorted(reasons.items(), key=lambda kv: -len(kv[1])):
         print(f"    {reason:<12} {len(vals):>6}  ({len(vals)/n*100:4.1f}%)  "
               f"avg {statistics.fmean(vals):+.4f}R")
-    return avg, tstat, n
+    return avg, cl_t, n
 
 
 def main() -> int:
@@ -251,14 +362,20 @@ def main() -> int:
                    help="ALSO run the holdout. Spends one of three total uses.")
     p.add_argument("--funnel", action="store_true", help="show gate survivor counts")
     p.add_argument("--cost-bps", type=float, default=DEFAULT_COST_BPS)
+    p.add_argument("--slots", type=int, default=15,
+                   help="MAX_CONCURRENT portfolio slots; 0 = unconstrained "
+                        "(not executable, for comparison only)")
+    p.add_argument("--tiebreak", choices=["rsi", "random", "symbol"], default="rsi")
     a = p.parse_args()
 
     if not glob.glob(os.path.join(DATA_DIR, "*.csv")):
         print("No data. Run: py research/fetch_bars.py", file=sys.stderr)
         return 1
 
-    trades, totals = run(TRAIN, a.cost_bps)
-    avg, tstat, n = report("TRAIN", TRAIN, trades, totals, a.cost_bps, True)
+    trades, totals = run(TRAIN, a.cost_bps, a.slots, a.tiebreak)
+    avg, tstat, n = report(f"TRAIN [{a.slots or 'unconstrained'} slots,"
+                           f" {a.tiebreak}]", TRAIN, trades, totals,
+                           a.cost_bps, True)
 
     print("\n  promotion bar (all three required, TRAIN):")
     checks = [(f"avg R >= +{BAR_AVG_R}", avg >= BAR_AVG_R, f"{avg:+.4f}R"),
@@ -274,7 +391,7 @@ def main() -> int:
             print("\n  REFUSING --holdout: TRAIN did not clear the bar. Spending a")
             print("  scarce holdout use on a failed hypothesis buys no information.")
             return 0
-        ht, htot = run(HOLDOUT, a.cost_bps)
+        ht, htot = run(HOLDOUT, a.cost_bps, a.slots, a.tiebreak)
         report("HOLDOUT", HOLDOUT, ht, htot, a.cost_bps, False)
         print("\n  *** A HOLDOUT USE HAS BEEN SPENT — record it in TEST_LEDGER.md ***")
     return 0

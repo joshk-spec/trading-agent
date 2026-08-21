@@ -649,10 +649,14 @@ def summarize(res: dict) -> str:
     total = sum(rs)
     avg = total / n
 
-    # Max drawdown on the cumulative R curve (equal risk per trade).
+    # Max drawdown on the cumulative R curve (equal risk per trade), walked in
+    # CHRONOLOGICAL order. `trades` is built symbol-by-symbol, so iterating it
+    # as emitted walks AAPL's whole history, then AA's -- a symbol-ordered
+    # sequence, not an equity curve. On the mean-reversion book the same defect
+    # understated drawdown 8.6x.
     peak = cum = 0.0
     mdd = 0.0
-    for r in rs:
+    for r in [t.r_multiple for t in sorted(trades, key=lambda t: (t.exit_date, t.symbol))]:
         cum += r
         peak = max(peak, cum)
         mdd = min(mdd, cum - peak)
