@@ -85,3 +85,64 @@ anything, and the mechanism has now been measured three independent ways
 **Holdout budget: still 1 / 3.** The two changes above are instrument
 corrections applied to the full period, not hypothesis tests, and spent no
 holdout.
+
+---
+
+## 2026-08-22 — H001 withdrawn, unrun
+
+Mean reversion with a 2.5×ATR stop. Withdrawn before execution: the operating
+mandate is explicit that a tight stop converts mean reversion's edge into its
+main loss source. A changed stop is a different hypothesis, so it was replaced
+rather than amended. **No holdout spent, no train run.**
+
+## 2026-08-22 — H002 short-term reversal (the P5 vehicle), TRAIN
+
+Pre-registration: `research/preregistered/002_short_term_reversal.md`, committed
+before `backtest_mr.py` was written. Spec taken verbatim from the mandate:
+RSI(2)<5 above the 200-SMA, enter next open, exit next open once close > SMA(5),
+10-session time stop, −15% disaster stop, **no tight stop**.
+
+**TRAIN 2011-2020, 534 names, 10bps round trip:**
+
+| | value |
+|---|---|
+| trades | **16,604** |
+| win rate | 65.5% |
+| avg return/trade after costs | **+0.274%** |
+| average R (1R = 15% of entry) | **+0.0183R** |
+| avg hold | 3.8 sessions |
+| max drawdown | −10.9R |
+| exits | reverted 96.9%, disaster 1.6%, time stop 1.5% |
+
+**Significance, corrected for clustering.** Signals fire together on
+market-wide selloffs (median 5 trades/day, max 110), so the naive t treats one
+bet as many:
+
+| grouping | n | avg R | t |
+|---|---|---|---|
+| naive, per trade | 16,604 | +0.0183 | **+9.91** |
+| clustered by entry date | 1,940 days | +0.0135 | **+3.47** |
+| clustered by month | 121 months | +0.0320 | **+3.99** |
+
+74% of months positive. The effect survives the correction — t = 3.47 clusters
+still clears both the 2.5 bar and a Bonferroni threshold for the project's ~22
+tests (|t| > 3.0).
+
+**VERDICT: FAILS the pre-registered bar.**
+
+| criterion | required | got | |
+|---|---|---|---|
+| avg R | ≥ +0.05 | +0.0183 | **FAIL** |
+| t | ≥ 2.5 | +3.47 clustered | PASS |
+| trades | ≥ 500 | 16,604 | PASS |
+
+**No holdout spent** — `backtest_mr.py` refuses `--holdout` when TRAIN fails,
+so the budget stays at 1/3.
+
+**This is a failure of magnitude, not of existence.** The edge is real,
+robust to clustering, and economically non-trivial (+0.274%/trade over a 3.8
+day hold). It does not reach a bar whose denominator I chose myself — see the
+open question in FINDINGS.md. I am not restating that bar while holding the
+result; that decision is the operator's.
+
+**Running total: 21 train runs, 1 holdout use of 3.**
