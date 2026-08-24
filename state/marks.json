@@ -1,7 +1,7 @@
 {
   "session_open_value": 50,
-  "session_open_date": "2026-08-21",
+  "session_open_date": "2026-08-24",
   "week_open_value": 50,
-  "week_open_date": "2026-08-19",
+  "week_open_date": "2026-08-24",
   "_note": "Drawdown halt reference marks. Set session_open at the first run of each trading day, week_open at the first run of each week."
 }
