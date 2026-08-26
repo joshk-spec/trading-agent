@@ -1,0 +1,28 @@
+HALT — 2026-08-26 09:40 ET
+
+Reason: Unexplained account value discrepancy + sub-$50 floor (§7).
+
+Account 793973603 ("Agentic") reconciled at session start to:
+  total_value: $0.00
+  cash:        $0.00
+  equity positions: none
+  option positions: none
+
+Prior session (2026-08-25 09:38 ET) journaled this same account at
+$50.00, all cash, zero open positions. Between that run and this one:
+  - get_equity_orders (from 2026-07-01 to present): zero orders
+  - get_option_orders (from 2026-07-01 to present): zero orders
+  - get_pnl_trade_history (span=month): zero realized trades
+
+No trade, assignment, expiry, fee, or fill of any kind explains a
+$50 -> $0 change in account value. This is an unexplained
+reconciliation discrepancy under CLAUDE.md §3 step 3 AND independently
+meets the §7 "account value below $50 (below this nothing is
+executable)" halt condition.
+
+Per CLAUDE.md §7: "When something happens that this document does not
+anticipate, halt and ask. Do not improvise." No orders were placed or
+positions touched this session (there were none to manage). This halt
+must be cleared by the operator only, after confirming whether this
+reflects a withdrawal, a data/API issue, or something else — never by
+the agent.
